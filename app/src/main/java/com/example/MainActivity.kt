@@ -237,19 +237,22 @@ fun PureNavIosApp(navViewModel: NavigationViewModel = viewModel()) {
             onOpenMapSettings = { navViewModel.toggleMapSettingsSheet(true) },
             onToggle3dPitch = { navViewModel.toggle3dPitch() },
             onDropPinOnMap = { pt -> navViewModel.dropPinOnMap(pt) },
+            nearbyTransitStations = uiState.nearbyTransitStations,
+            selectedTransitStation = uiState.selectedTransitStation,
+            onSelectTransitStation = { st -> navViewModel.selectTransitStation(st) },
             currentStepIndex = uiState.currentStepIndex,
             distanceToNextTurnMeters = if (uiState.activeRoute != null) uiState.distanceToNextTurnMeters else 129,
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.statusBars)
+            modifier = Modifier.fillMaxSize()
         )
 
-        // 顶部高德同款深色圆角诱导大卡片（在 3D 车道级视图或实时导航态下常驻展示）
-        if (uiState.is3dPitchEnabled || uiState.sheetMode == IosSheetMode.ACTIVE_NAVIGATION) {
+        // 顶部高德同款深色圆角诱导大卡片 / 公交地铁实时电子站牌
+        if (uiState.is3dPitchEnabled || uiState.sheetMode == IosSheetMode.ACTIVE_NAVIGATION || uiState.travelMode.name == "TRANSIT") {
             IosTopTurnByTurnBanner(
                 uiState = uiState,
                 isVoiceEnabled = telemetry.isVoiceEnabled,
                 onToggleVoice = { navViewModel.toggleVoiceAnnouncements() },
+                onSelectTransitStation = { st -> navViewModel.selectTransitStation(st) },
+                onWalkToTransitStation = { st -> navViewModel.walkToTransitStation(st) },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)

@@ -106,6 +106,7 @@ import com.example.data.local.SavedPlaceEntity
 import com.example.data.remote.CalculatedRoute
 import com.example.data.remote.NavEngineType
 import com.example.data.remote.TransitPlanOption
+import com.example.data.remote.TransitStationInfo
 import com.example.data.remote.TravelMode
 import com.example.ui.NavigationUiState
 import com.example.ui.NavigationViewModel
@@ -159,13 +160,13 @@ fun IosExploreBottomSheet(
     var liveDragPx by remember { mutableFloatStateOf(0f) }
 
     val baseTargetHeight = when (uiState.sheetDetent) {
-        SheetDetent.COLLAPSED -> 90.dp
-        SheetDetent.HALF -> 215.dp
-        SheetDetent.EXPANDED -> 585.dp
+        SheetDetent.COLLAPSED -> 108.dp
+        SheetDetent.HALF -> if (uiState.travelMode == TravelMode.TRANSIT) 375.dp else 305.dp
+        SheetDetent.EXPANDED -> 610.dp
     }
     val dragOffsetDp = with(density) { (-liveDragPx).toDp() }
     val animatedSheetHeight by animateDpAsState(
-        targetValue = (baseTargetHeight + dragOffsetDp).coerceIn(84.dp, 625.dp),
+        targetValue = (baseTargetHeight + dragOffsetDp).coerceIn(96.dp, 645.dp),
         animationSpec = spring(
             dampingRatio = 0.84f,
             stiffness = Spring.StiffnessMediumLow
@@ -176,7 +177,7 @@ fun IosExploreBottomSheet(
     val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
     Surface(
-        color = Color(0xFFF5F5F8).copy(alpha = 0.96f),
+        color = Color(0xFFF5F5F8).copy(alpha = 0.97f),
         shape = sheetShape,
         modifier = Modifier
             .fillMaxWidth()
@@ -193,11 +194,11 @@ fun IosExploreBottomSheet(
                 ),
                 shape = sheetShape
             )
-            .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 16.dp)
         ) {
             // 顶部拖拽手势热区 + iOS Capsule Grabber
@@ -363,7 +364,13 @@ fun IosExploreBottomSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (uiState.preferredEngine == NavEngineType.TENCENT_LBS) "腾" else "源",
+                        text = when {
+                            uiState.isAmapKeyConfigured -> "高"
+                            uiState.isTencentKeyConfigured -> "腾"
+                            uiState.preferredEngine == NavEngineType.AMAP_LBS -> "高"
+                            uiState.preferredEngine == NavEngineType.TENCENT_LBS -> "腾"
+                            else -> "源"
+                        },
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
@@ -550,6 +557,18 @@ fun IosExploreBottomSheet(
                                 }
                             }
                         }
+                    }
+                }
+
+                // 0b. 公交地铁模式专属：周边地铁站与公交站实时电子站牌 + 线路首末班车 + 站口指引
+                if (uiState.travelMode == TravelMode.TRANSIT && uiState.nearbyTransitStations.isNotEmpty()) {
+                    item {
+                        TransitStationExplorerSection(
+                            stations = uiState.nearbyTransitStations,
+                            selectedStation = uiState.selectedTransitStation ?: uiState.nearbyTransitStations.first(),
+                            onSelectStation = { st -> navViewModel.selectTransitStation(st) },
+                            onWalkToStation = { st -> navViewModel.walkToTransitStation(st) }
+                        )
                     }
                 }
 
@@ -856,7 +875,7 @@ fun IosPlaceDetailSheet(
     }
 
     Surface(
-        color = Color(0xFFF5F5F8).copy(alpha = 0.97f),
+        color = Color(0xFFF5F5F8).copy(alpha = 0.98f),
         shape = sheetShape,
         modifier = Modifier
             .fillMaxWidth()
@@ -866,11 +885,11 @@ fun IosPlaceDetailSheet(
                 Brush.verticalGradient(listOf(Color.White, Color.Transparent)),
                 sheetShape
             )
-            .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             Box(
@@ -1121,11 +1140,11 @@ fun IosRoutePreviewSheet(
                 Brush.verticalGradient(listOf(Color.White, Color.Transparent)),
                 sheetShape
             )
-            .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             // Grabber
@@ -1747,16 +1766,509 @@ private fun modeIcon(mode: TravelMode): ImageVector {
 }
 
 /**
- * ==================== 4. 模式自适应顶部导航诱导大卡片（驾车=高德深蓝黑车道卡；步行=翡翠绿步行罗盘卡；骑行=青绿破风卡；地铁=轨道交通卡） ====================
+ * ==================== 3b. 公交地铁模式专属：周边地铁站与公交站实时到站时刻表、途经站点序列与进出站口指引 ====================
+ */
+@Composable
+private fun TransitStationExplorerSection(
+    stations: List<TransitStationInfo>,
+    selectedStation: TransitStationInfo,
+    onSelectStation: (TransitStationInfo) -> Unit,
+    onWalkToStation: (TransitStationInfo) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // 顶部标题 + 站点类型统计
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.DirectionsSubway,
+                    contentDescription = null,
+                    tint = Color(0xFF0891B2),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "附近地铁站与公交站 (实时到站)",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1C1C1E)
+                )
+            }
+            Text(
+                text = "点击站点切换电子站牌",
+                fontSize = 11.sp,
+                color = IosSystemGray
+            )
+        }
+
+        // 横向站点快速切换胶囊栏
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp)
+        ) {
+            itemsIndexed(stations, key = { _, st -> "chip_${st.id}" }) { _, st ->
+                val isSelected = st.id == selectedStation.id
+                val lineColor = Color(st.lines.firstOrNull()?.badgeColorHex ?: 0xFF1677FF)
+                val isSubway = st.stationType == "SUBWAY"
+                Surface(
+                    onClick = { onSelectStation(st) },
+                    color = if (isSelected) lineColor else IosCardLight,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) lineColor else lineColor.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .testTag("station_chip_${st.id}")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (isSubway) Icons.Default.DirectionsSubway else Icons.Default.DirectionsBus,
+                            contentDescription = st.name,
+                            tint = if (isSelected) Color.White else lineColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = st.name,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) Color.White else Color(0xFF1C1C1E)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${st.distanceMeters}m",
+                            fontSize = 10.sp,
+                            color = if (isSelected) Color.White.copy(alpha = 0.88f) else IosSystemGray
+                        )
+                    }
+                }
+            }
+        }
+
+        // 当前选中站点：实时电子站牌详情大卡片
+        val primaryColor = Color(selectedStation.lines.firstOrNull()?.badgeColorHex ?: 0xFF1677FF)
+        Surface(
+            color = IosCardLight,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, primaryColor.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 站点头部：站名 + 最近出入口 + 步行去进站口按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = primaryColor,
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = if (selectedStation.stationType == "SUBWAY") "地铁站" else "公交站",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(7.dp))
+                            Text(
+                                text = selectedStation.name,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF0F172A)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "最近进站：${selectedStation.nearestExit} · 步行 ${selectedStation.distanceMeters}米 (约${selectedStation.walkingMinutes}分钟)",
+                            fontSize = 11.sp,
+                            color = Color(0xFF475569)
+                        )
+                    }
+
+                    Surface(
+                        onClick = { onWalkToStation(selectedStation) },
+                        color = Color(0xFF10B981).copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("walk_to_station_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.DirectionsWalk,
+                                contentDescription = "步行去进站口",
+                                tint = Color(0xFF059669),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "去站口",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF059669)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = IosSystemGray5, thickness = 0.5.dp)
+
+                // 各条线路实时到站时刻与途经站点序列
+                selectedStation.lines.forEachIndexed { idx, line ->
+                    val badgeColor = Color(line.badgeColorHex)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF8FAFC), RoundedCornerShape(12.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        color = badgeColor,
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = line.lineName,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = line.directionTerminal,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${line.nextStopName} · ${line.firstLastTime}",
+                                    fontSize = 11.sp,
+                                    color = IosSystemGray
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.End) {
+                                Row(verticalAlignment = Alignment.Bottom) {
+                                    Text(
+                                        text = if (line.nextArrivalMinutes <= 1) "即将进站" else "${line.nextArrivalMinutes} 分钟",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF059669)
+                                    )
+                                }
+                                Text(
+                                    text = "下班 ${line.secondArrivalMinutes}分 · ${line.crowdStatus}",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+
+                        // 途经站点横向序列条（高亮当前站与列车行驶方向）
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            itemsIndexed(line.stopsSequence, key = { sIdx, stop -> "${idx}_${sIdx}_$stop" }) { sIdx, stopName ->
+                                val isCurrentStop = sIdx == line.currentStopIndex
+                                val isPassed = sIdx < line.currentStopIndex
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        color = when {
+                                            isCurrentStop -> badgeColor
+                                            isPassed -> Color(0xFFE2E8F0)
+                                            else -> badgeColor.copy(alpha = 0.12f)
+                                        },
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isCurrentStop) "● $stopName(本站)" else stopName,
+                                            fontSize = 10.sp,
+                                            fontWeight = if (isCurrentStop) FontWeight.ExtraBold else FontWeight.Medium,
+                                            color = when {
+                                                isCurrentStop -> Color.White
+                                                isPassed -> Color(0xFF94A3B8)
+                                                else -> Color(0xFF1E293B)
+                                            },
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    if (sIdx < line.stopsSequence.lastIndex) {
+                                        Text(
+                                            text = "→",
+                                            fontSize = 10.sp,
+                                            color = if (isPassed) Color(0xFFCBD5E1) else badgeColor,
+                                            modifier = Modifier.padding(horizontal = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 进出站口与周边地标指引
+                if (selectedStation.exits.isNotEmpty()) {
+                    Text(
+                        text = "进出站口与街景地标指引",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF334155)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        selectedStation.exits.forEach { exit ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Surface(
+                                        color = Color(0xFF0F172A),
+                                        shape = RoundedCornerShape(5.dp)
+                                    ) {
+                                        Text(
+                                            text = exit.exitCode,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFFACC15),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(7.dp))
+                                    Text(
+                                        text = exit.landmarkDesc,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF334155),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = "${exit.distanceMeters}m",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = IosSystemGray
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * ==================== 4. 模式自适应顶部导航诱导大卡片（驾车=高德深蓝黑车道卡；步行=翡翠绿步行罗盘卡；骑行=青绿破风卡；地铁探索态=附近地铁公交实时电子站牌） ====================
  */
 @Composable
 fun IosTopTurnByTurnBanner(
     uiState: NavigationUiState,
     isVoiceEnabled: Boolean,
     onToggleVoice: () -> Unit,
+    onSelectTransitStation: (TransitStationInfo) -> Unit = {},
+    onWalkToTransitStation: (TransitStationInfo) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val effectiveMode = uiState.activeRoute?.travelMode ?: uiState.travelMode
+    // 当处于「公交地铁」站点探索模式（无导航路线）时，顶部展示「附近地铁与公交实时电子站牌」而非驾车转向诱导卡！
+    if (effectiveMode == TravelMode.TRANSIT && uiState.activeRoute == null && uiState.nearbyTransitStations.isNotEmpty()) {
+        val station = uiState.selectedTransitStation ?: uiState.nearbyTransitStations.first()
+        val firstLine = station.lines.firstOrNull()
+        val secondLine = station.lines.getOrNull(1)
+        val lineColor = Color(firstLine?.badgeColorHex ?: 0xFFC23A30)
+
+        Surface(
+            color = Color(0xFF0F172A).copy(alpha = 0.96f),
+            shape = RoundedCornerShape(24.dp),
+            modifier = modifier
+                .fillMaxWidth()
+                .shadow(16.dp, RoundedCornerShape(24.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 第一行：当前电子站牌站名 + 最近站口距离 + 步行去进站口按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .background(lineColor, RoundedCornerShape(11.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (station.stationType == "SUBWAY") Icons.Default.DirectionsSubway else Icons.Default.DirectionsBus,
+                                contentDescription = station.name,
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "${station.name} (${if (station.stationType == "SUBWAY") "地铁站" else "公交站"})",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    color = Color(0xFF10B981).copy(alpha = 0.22f),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = "距您 ${station.distanceMeters}m",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF34D399),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "最近进站：${station.nearestExit}",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { onWalkToTransitStation(station) },
+                        color = Color(0xFF10B981),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.DirectionsWalk,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "去进站口",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+
+                // 第二行：实时列车/公交到站 LED 电子屏显示
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1E293B), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    listOfNotNull(firstLine, secondLine).forEach { line ->
+                        val lColor = Color(line.badgeColorHex)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    color = lColor,
+                                    shape = RoundedCornerShape(5.dp)
+                                ) {
+                                    Text(
+                                        text = line.shortBadge,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Text(
+                                    text = "${line.directionTerminal} · ${line.nextStopName}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFE2E8F0),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = if (line.nextArrivalMinutes <= 1) "⚡ 即将进站" else "⚡ ${line.nextArrivalMinutes}分钟 · 下班${line.secondArrivalMinutes}分",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF34D399)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     val steps = uiState.activeRoute?.steps ?: emptyList()
     val currentStep = steps.getOrNull(uiState.currentStepIndex)
     val action = currentStep?.actionType ?: "左转"

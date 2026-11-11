@@ -70,6 +70,40 @@ data class TransitPlanOption(
     val segments: List<TransitSegment>
 )
 
+data class TransitLineArrival(
+    val lineName: String,          // 例如："地铁1号线八通线", "地铁8号线", "1路", "52路", "120路"
+    val shortBadge: String,        // 例如："1号线", "8号线", "1路", "52路"
+    val badgeColorHex: Long,       // 例如：0xFFC23A30 (北京1号线红), 0xFF009B6B (8号线绿), 0xFF1677FF (公交蓝)
+    val isSubway: Boolean,
+    val directionTerminal: String, // 例如："开往 环球度假区", "开往 古城", "开往 四惠枢纽站"
+    val nextStopName: String,      // 例如："下一站 王府井"
+    val nextArrivalMinutes: Int,   // 例如：1 (1分钟 / 即将进站)
+    val secondArrivalMinutes: Int, // 例如：6 (下一班 6分钟)
+    val crowdStatus: String,       // 例如："余座充足", "舒适"
+    val firstLastTime: String,     // 例如："首 05:10 · 末 23:35"
+    val stopsSequence: List<String>, // 站点序列：例如 ["复兴门", "西单", "天安门西", "天安门东", "王府井", "东单", "建国门"]
+    val currentStopIndex: Int = 3
+)
+
+data class TransitExitGuide(
+    val exitCode: String,          // 例如："B东北口"
+    val landmarkDesc: String,      // 例如："南池子大街 · 故宫东华门 · 设有无障碍直梯"
+    val distanceMeters: Int
+)
+
+data class TransitStationInfo(
+    val id: String,
+    val name: String,              // 例如："天安门东", "南池子南口", "东华门", "王府井"
+    val stationType: String,       // "SUBWAY" 或 "BUS"
+    val nearestExit: String,       // 例如："B东北口 (无障碍直梯)"
+    val distanceMeters: Int,
+    val walkingMinutes: Int,
+    val wgs84Point: LatLngPoint,
+    val gcj02Point: LatLngPoint,
+    val lines: List<TransitLineArrival>,
+    val exits: List<TransitExitGuide>
+)
+
 data class CalculatedRoute(
     val originName: String,
     val destinationName: String,

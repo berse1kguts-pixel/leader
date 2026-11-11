@@ -13,6 +13,7 @@ import com.example.data.remote.CalculatedRoute
 import com.example.data.remote.DualEngineNavService
 import com.example.data.remote.NavEngineType
 import com.example.data.remote.SearchPoiResult
+import com.example.data.remote.TransitStationInfo
 import com.example.data.remote.TravelMode
 import com.example.sensor.GpsAndCompassTracker
 import com.example.sensor.TelemetryState
@@ -87,6 +88,8 @@ data class NavigationUiState(
     val distanceToNextTurnMeters: Int = 0,
     val remainingDistanceMeters: Int = 0,
     val remainingDurationSeconds: Int = 0,
+    val nearbyTransitStations: List<TransitStationInfo> = emptyList(),
+    val selectedTransitStation: TransitStationInfo? = null,
     val statusBanner: String = "纯净零广告 · 双引擎算路已就绪",
     val usedRamMb: Int = 38
 )
@@ -129,7 +132,20 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     init {
         viewModelScope.launch {
             repository.ensureDefaultPresets()
+            val initialStations = navService.getNearbyTransitStations(telemetry.value.currentWgs84)
+            _uiState.value = _uiState.value.copy(
+                nearbyTransitStations = initialStations,
+                selectedTransitStation = initialStations.firstOrNull()
+            )
             refreshMemoryFootprint()
+            // 启动即在后台预加载一条从南池子大街到王府井步行街的真实路线，使 3D 车标/行人标下方始终贴合真实道路与导航光带
+            planRouteTo(
+                destName = "王府井步行街",
+                destAddress = "北京市东城区王府井大街255号",
+                destWgs84 = LatLngPoint(39.9143, 116.4114),
+                recordHistory = false,
+                keepCurrentSheetMode = true
+            )
         }
     }
 
@@ -235,7 +251,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.value = _uiState.value.copy(
             sheetMode = IosSheetMode.PLACE_DETAIL,
             showSearchSheet = false,
-            activeRoute = null,
             selectedPlace = SelectedPlaceDetail(
                 title = title,
                 subtitle = address,
@@ -268,8 +283,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.value = _uiState.value.copy(
             sheetMode = IosSheetMode.EXPLORE,
             sheetDetent = SheetDetent.HALF,
-            selectedPlace = null,
-            activeRoute = null,
             isNavigating = false,
             isCruiseSimulation = false
         )
@@ -288,57 +301,100 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 destName = currentRoute.destinationName,
                 destAddress = currentRoute.destinationAddress,
                 destWgs84 = currentRoute.destinationWgs84,
-                recordHistory = false
+                recordHistory = false,
+                keepCurrentSheetMode = (_uiState.value.sheetMode == IosSheetMode.EXPLORE)
             )
         }
     }
 
+    fun selectTransitStation(station: TransitStationInfo) {
+        _uiState.value = _uiState.value.copy(
+            selectedTransitStation = station,
+            statusBanner = "已切换至 ${station.name} · 实时电子站牌"
+        )
+    }
+
+    fun walkToTransitStation(station: TransitStationInfo) {
+        _uiState.value = _uiState.value.copy(travelMode = TravelMode.WALKING)
+        val exitShort = station.nearestExit.substringBefore(" · ")
+        planRouteTo(
+            destName = "${station.name} ($exitShort)",
+            destAddress = station.nearestExit,
+            destWgs84 = station.wgs84Point,
+            recordHistory = false,
+            keepCurrentSheetMode = false
+        )
+    }
+
     fun selectTravelMode(mode: TravelMode) {
         if (_uiState.value.travelMode == mode) return
+        val currentSheet = _uiState.value.sheetMode
+
+        // 在探索态（EXPLORE）下点击「公交地铁」：进入周边地铁站与公交站实时电子站牌看板模式，不绘制驾车式的路线
+        if (mode == TravelMode.TRANSIT && currentSheet == IosSheetMode.EXPLORE) {
+            stopCruiseSimulation()
+            val stations = navService.getNearbyTransitStations(telemetry.value.currentWgs84)
+            val chosen = _uiState.value.selectedTransitStation
+                ?.let { prev -> stations.find { it.id == prev.id } }
+                ?: stations.firstOrNull()
+            _uiState.value = _uiState.value.copy(
+                travelMode = TravelMode.TRANSIT,
+                activeRoute = null,
+                isNavigating = false,
+                isCalculatingRoute = false,
+                nearbyTransitStations = stations,
+                selectedTransitStation = chosen,
+                statusBanner = "周边 ${stations.size} 个地铁站与公交站 · 实时到站信息已同步"
+            )
+            return
+        }
+
         _uiState.value = _uiState.value.copy(travelMode = mode)
         val currentRoute = _uiState.value.activeRoute
         val place = _uiState.value.selectedPlace
+        val keepSheet = (currentSheet == IosSheetMode.EXPLORE)
 
-        val targetName = currentRoute?.destinationName ?: place?.title
-        val targetAddr = currentRoute?.destinationAddress ?: place?.subtitle
-        val targetPt = currentRoute?.destinationWgs84 ?: place?.wgs84
+        val targetName = currentRoute?.destinationName ?: place?.title ?: "王府井步行街"
+        val targetAddr = currentRoute?.destinationAddress ?: place?.subtitle ?: "北京市东城区王府井大街255号"
+        val targetPt = currentRoute?.destinationWgs84 ?: place?.wgs84 ?: LatLngPoint(39.9143, 116.4114)
 
-        if (targetName != null && targetAddr != null && targetPt != null) {
-            val distMeters = CoordinateUtils.haversineDistanceMeters(telemetry.value.currentWgs84, targetPt)
-            // 智能同城距离守护：防止用户在看跨省长途路线（如 1423公里）时切到「步行」出现 17575分钟的不合理画面
-            when {
-                mode == TravelMode.WALKING && distMeters > 15_000 -> {
-                    planRouteTo(
-                        destName = "王府井步行街",
-                        destAddress = "北京市东城区王府井大街255号（已自动匹配适宜步行距离）",
-                        destWgs84 = LatLngPoint(39.9143, 116.4114),
-                        recordHistory = false
-                    )
-                }
-                mode == TravelMode.CYCLING && distMeters > 50_000 -> {
-                    planRouteTo(
-                        destName = "故宫博物院（午门）",
-                        destAddress = "北京市东城区景山前街4号（已自动匹配适宜骑行距离）",
-                        destWgs84 = LatLngPoint(39.9163, 116.3972),
-                        recordHistory = false
-                    )
-                }
-                mode == TravelMode.TRANSIT && distMeters > 80_000 -> {
-                    planRouteTo(
-                        destName = "北京南站",
-                        destAddress = "北京市丰台区永外大街车站路12号（已自动匹配同城地铁距离）",
-                        destWgs84 = LatLngPoint(39.8651, 116.3785),
-                        recordHistory = false
-                    )
-                }
-                else -> {
-                    planRouteTo(
-                        destName = targetName,
-                        destAddress = targetAddr,
-                        destWgs84 = targetPt,
-                        recordHistory = false
-                    )
-                }
+        val distMeters = CoordinateUtils.haversineDistanceMeters(telemetry.value.currentWgs84, targetPt)
+        when {
+            mode == TravelMode.WALKING && distMeters > 15_000 -> {
+                planRouteTo(
+                    destName = "王府井步行街",
+                    destAddress = "北京市东城区王府井大街255号（已自动匹配适宜步行距离）",
+                    destWgs84 = LatLngPoint(39.9143, 116.4114),
+                    recordHistory = false,
+                    keepCurrentSheetMode = keepSheet
+                )
+            }
+            mode == TravelMode.CYCLING && distMeters > 50_000 -> {
+                planRouteTo(
+                    destName = "故宫博物院（午门）",
+                    destAddress = "北京市东城区景山前街4号（已自动匹配适宜骑行距离）",
+                    destWgs84 = LatLngPoint(39.9163, 116.3972),
+                    recordHistory = false,
+                    keepCurrentSheetMode = keepSheet
+                )
+            }
+            mode == TravelMode.TRANSIT && distMeters > 80_000 -> {
+                planRouteTo(
+                    destName = "北京南站",
+                    destAddress = "北京市丰台区永外大街车站路12号（已自动匹配同城地铁距离）",
+                    destWgs84 = LatLngPoint(39.8651, 116.3785),
+                    recordHistory = false,
+                    keepCurrentSheetMode = keepSheet
+                )
+            }
+            else -> {
+                planRouteTo(
+                    destName = targetName,
+                    destAddress = targetAddr,
+                    destWgs84 = targetPt,
+                    recordHistory = false,
+                    keepCurrentSheetMode = keepSheet
+                )
             }
         }
     }
@@ -347,13 +403,13 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         destName: String,
         destAddress: String,
         destWgs84: LatLngPoint,
-        recordHistory: Boolean = true
+        recordHistory: Boolean = true,
+        keepCurrentSheetMode: Boolean = false
     ) {
         stopCruiseSimulation()
         val gcj = CoordinateUtils.wgs84ToGcj02(destWgs84.latitude, destWgs84.longitude)
         val rawDistMeters = CoordinateUtils.haversineDistanceMeters(telemetry.value.currentWgs84, destWgs84).roundToInt()
 
-        // 如果当前是步行模式，且用户点了一个超过 15 公里的跨城终点，或者反之，确保模式合理
         val effectiveMode = if (_uiState.value.travelMode == TravelMode.WALKING && rawDistMeters > 20_000) {
             TravelMode.DRIVING
         } else {
@@ -361,6 +417,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         val estMins = max(2, (rawDistMeters / 650.0).roundToInt())
+        val nextSheetMode = if (keepCurrentSheetMode) _uiState.value.sheetMode else IosSheetMode.ROUTE_PREVIEW
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -368,7 +425,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 isCalculatingRoute = true,
                 showSearchSheet = false,
                 isNavigating = false,
-                sheetMode = IosSheetMode.ROUTE_PREVIEW,
+                sheetMode = nextSheetMode,
                 selectedRouteOptionIndex = 0,
                 selectedPlace = SelectedPlaceDetail(
                     title = destName,
@@ -393,7 +450,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 preferredEngine = _uiState.value.preferredEngine
             )
 
-            // 将定位朝向对齐到路线起始方向，使车标/行人标正对路线前进方向
+            // 将自车/行人/单车定位精确吸附到真实路线起点，并将朝向对齐到路线前进方向
             if (route.polylineWgs84.size >= 2) {
                 val initialBearing = CoordinateUtils.bearingDegrees(
                     route.polylineWgs84[0],

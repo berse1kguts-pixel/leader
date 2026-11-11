@@ -89,10 +89,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.DirectionsBus
 import com.example.data.CoordinateUtils
 import com.example.data.LatLngPoint
 import com.example.data.remote.CalculatedRoute
 import com.example.data.remote.NavStep
+import com.example.data.remote.TransitStationInfo
 import com.example.data.remote.TravelMode
 import com.example.ui.SelectedPlaceDetail
 import com.example.ui.theme.AmberWarning
@@ -313,6 +316,9 @@ fun InteractiveMapCanvas(
     onOpenMapSettings: () -> Unit,
     onToggle3dPitch: () -> Unit,
     onDropPinOnMap: (LatLngPoint) -> Unit,
+    nearbyTransitStations: List<TransitStationInfo> = emptyList(),
+    selectedTransitStation: TransitStationInfo? = null,
+    onSelectTransitStation: (TransitStationInfo) -> Unit = {},
     currentStepIndex: Int = 0,
     distanceToNextTurnMeters: Int = 129,
     modifier: Modifier = Modifier
@@ -328,22 +334,23 @@ fun InteractiveMapCanvas(
     var isTrafficOverlayEnabled by remember { mutableStateOf(true) }
 
     val effectiveMode = activeRoute?.travelMode ?: travelMode
+    val isTransitStationExplore = (effectiveMode == TravelMode.TRANSIT && activeRoute == null)
 
-    // 根据出行方式调整最佳 3D 俯仰角：驾车 48°、骑行 44°、步行 40°（看清周边人行步道与街角店铺）、公交地铁 32°
+    // 根据出行方式调整最佳 3D 俯仰角：公交地铁站点查询态使用清晰平视/微倾角（0°）以便清晰查看周围所有地铁站与公交站牌
     val targetPitchX = when {
-        !is3dPitchEnabled -> 0f
-        effectiveMode == TravelMode.WALKING -> 40f
-        effectiveMode == TravelMode.CYCLING -> 44f
-        effectiveMode == TravelMode.TRANSIT -> 30f
-        isNavigating -> 50f
-        else -> 46f
+        !is3dPitchEnabled || isTransitStationExplore -> 0f
+        effectiveMode == TravelMode.WALKING -> 34f
+        effectiveMode == TravelMode.CYCLING -> 36f
+        effectiveMode == TravelMode.TRANSIT -> 22f
+        isNavigating -> 40f
+        else -> 38f
     }
     val animatedPitchX by animateFloatAsState(
         targetValue = targetPitchX,
         animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessLow),
         label = "pitchXAnim"
     )
-    val pitchFactor = (animatedPitchX / 48f).coerceIn(0f, 1.1f)
+    val pitchFactor = (animatedPitchX / 44f).coerceIn(0f, 1.0f)
 
     val infiniteTransition = rememberInfiniteTransition(label = "realRouteFlow")
     val laneFlowPhase by infiniteTransition.animateFloat(
@@ -364,22 +371,38 @@ fun InteractiveMapCanvas(
         }
     }
 
-    LaunchedEffect(selectedPlace, activeRoute, isNavigating, effectiveMode) {
+    LaunchedEffect(selectedPlace, activeRoute, isNavigating, effectiveMode, is3dPitchEnabled, selectedTransitStation) {
         if (isNavigating) {
             trackingState = 2
             cameraCenterWgs84 = currentLocationWgs84
             continuousZoom = when (effectiveMode) {
-                TravelMode.WALKING -> 17.2f
-                TravelMode.CYCLING -> 16.8f
+                TravelMode.WALKING -> 17.0f
+                TravelMode.CYCLING -> 16.6f
                 TravelMode.TRANSIT -> 15.2f
-                TravelMode.DRIVING -> 16.5f
+                TravelMode.DRIVING -> 16.4f
             }
-        } else if (activeRoute != null) {
+        } else if (isTransitStationExplore) {
+            // 公交地铁站点探索模式：镜头聚焦在当前位置与所选地铁/公交站之间，清晰展示周边全网站点气泡
             trackingState = 0
-            if (is3dPitchEnabled && activeRoute.totalDistanceMeters > 12_000) {
-                cameraCenterWgs84 = activeRoute.originWgs84
-                continuousZoom = 16.0f
+            val stationPt = selectedTransitStation?.wgs84Point ?: currentLocationWgs84
+            val midLat = (currentLocationWgs84.latitude * 0.45 + stationPt.latitude * 0.55)
+            val midLon = (currentLocationWgs84.longitude * 0.45 + stationPt.longitude * 0.55)
+            cameraCenterWgs84 = LatLngPoint(midLat, midLon)
+            continuousZoom = 15.5f
+        } else if (activeRoute != null) {
+            if (is3dPitchEnabled) {
+                // 3D 沉浸视角下始终将镜头锚定在用户与路线起点正中央，确保 3D 车模/行人紧贴车道中心线
+                trackingState = 1
+                cameraCenterWgs84 = currentLocationWgs84
+                continuousZoom = when (effectiveMode) {
+                    TravelMode.WALKING -> 16.8f
+                    TravelMode.CYCLING -> 16.4f
+                    TravelMode.TRANSIT -> 15.4f
+                    TravelMode.DRIVING -> 16.3f
+                }
             } else {
+                // 2D 平面全览模式下居中展示整条路线
+                trackingState = 0
                 val midLat = (activeRoute.originWgs84.latitude + activeRoute.destinationWgs84.latitude) / 2.0
                 val midLon = (activeRoute.originWgs84.longitude + activeRoute.destinationWgs84.longitude) / 2.0
                 cameraCenterWgs84 = LatLngPoint(midLat, midLon)
@@ -389,8 +412,8 @@ fun InteractiveMapCanvas(
                     dist > 30_000 -> 11.4f
                     dist > 12_000 -> 13.2f
                     dist > 4_000 -> 14.6f
-                    dist > 1_500 -> 15.8f
-                    else -> 16.6f
+                    dist > 1_500 -> 15.6f
+                    else -> 16.2f
                 }
             }
         } else if (selectedPlace != null) {
@@ -542,12 +565,12 @@ fun InteractiveMapCanvas(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    transformOrigin = TransformOrigin(0.5f, 0.66f)
+                    transformOrigin = TransformOrigin(0.5f, 0.64f)
                     rotationX = animatedPitchX
-                    val overscanScale = 1f + pitchFactor * 0.62f
+                    val overscanScale = 1f + pitchFactor * 0.36f
                     scaleX = overscanScale
-                    scaleY = overscanScale * (1f + pitchFactor * 0.18f)
-                    cameraDistance = 11f * density.density
+                    scaleY = overscanScale * (1f + pitchFactor * 0.08f)
+                    cameraDistance = 14f * density.density
                 }
                 .testTag("interactive_map_canvas")
         ) {
@@ -885,8 +908,109 @@ fun InteractiveMapCanvas(
                 }
             }
 
-            // 1e. 终点大头针
-            val pinTarget = activeRoute?.destinationWgs84 ?: selectedPlace?.wgs84
+            // 1e. 公交地铁站点探索态：绘制真实地铁1号线（红）与地铁8号线（绿）走向线 + 当前位置到选中站点的步行虚线引导
+            if (isTransitStationExplore && nearbyTransitStations.isNotEmpty()) {
+                // 地铁1号线八通线（长安街东西向轨道走廊）
+                val line1Pts = listOf(
+                    CoordinateUtils.gcj02ToWgs84(39.90745, 116.39150), // 天安门西
+                    CoordinateUtils.gcj02ToWgs84(39.90778, 116.40122), // 天安门东
+                    CoordinateUtils.gcj02ToWgs84(39.90808, 116.41152), // 王府井
+                    CoordinateUtils.gcj02ToWgs84(39.90832, 116.41850)  // 东单
+                ).map { projectWgs84ToScreen(it, w, h) }
+
+                val line1Path = Path().apply {
+                    line1Pts.forEachIndexed { idx, pt ->
+                        if (idx == 0) moveTo(pt.x, pt.y) else lineTo(pt.x, pt.y)
+                    }
+                }
+                drawPath(
+                    path = line1Path,
+                    color = Color.White.copy(alpha = 0.90f),
+                    style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+                drawPath(
+                    path = line1Path,
+                    color = Color(0xFFC23A30).copy(alpha = 0.85f),
+                    style = Stroke(width = 5.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+
+                // 地铁8号线（王府井-金鱼胡同南北向轨道走廊）
+                val line8Pts = listOf(
+                    CoordinateUtils.gcj02ToWgs84(39.92380, 116.41020), // 中国美术馆
+                    CoordinateUtils.gcj02ToWgs84(39.91545, 116.40980), // 金鱼胡同·东华门
+                    CoordinateUtils.gcj02ToWgs84(39.90808, 116.41152), // 王府井
+                    CoordinateUtils.gcj02ToWgs84(39.90010, 116.40420)  // 前门
+                ).map { projectWgs84ToScreen(it, w, h) }
+
+                val line8Path = Path().apply {
+                    line8Pts.forEachIndexed { idx, pt ->
+                        if (idx == 0) moveTo(pt.x, pt.y) else lineTo(pt.x, pt.y)
+                    }
+                }
+                drawPath(
+                    path = line8Path,
+                    color = Color.White.copy(alpha = 0.90f),
+                    style = Stroke(width = 9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+                drawPath(
+                    path = line8Path,
+                    color = Color(0xFF009B6B).copy(alpha = 0.85f),
+                    style = Stroke(width = 5.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+
+                // 绘制从「我的位置」到当前选中地铁/公交站进站口的翡翠绿步行接驳虚线
+                val targetStation = selectedTransitStation ?: nearbyTransitStations.firstOrNull()
+                if (targetStation != null) {
+                    val userScreen = projectWgs84ToScreen(currentLocationWgs84, w, h)
+                    val stationScreen = projectWgs84ToScreen(targetStation.wgs84Point, w, h)
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.92f),
+                        start = userScreen,
+                        end = stationScreen,
+                        strokeWidth = 7.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = Color(0xFF10B981),
+                        start = userScreen,
+                        end = stationScreen,
+                        strokeWidth = 4.dp.toPx(),
+                        cap = StrokeCap.Round,
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(12.dp.toPx(), 10.dp.toPx()),
+                            phase = -laneFlowPhase * 22.dp.toPx()
+                        )
+                    )
+                }
+
+                // 在每个站点坐标处绘制轨道站台圆环锚点
+                nearbyTransitStations.forEach { st ->
+                    val stPos = projectWgs84ToScreen(st.wgs84Point, w, h)
+                    val isSelected = (st.id == (selectedTransitStation?.id ?: nearbyTransitStations.firstOrNull()?.id))
+                    val primaryLineColor = Color(st.lines.firstOrNull()?.badgeColorHex ?: 0xFF1677FF)
+                    if (isSelected) {
+                        drawCircle(
+                            color = primaryLineColor.copy(alpha = 0.24f),
+                            radius = 22.dp.toPx(),
+                            center = stPos
+                        )
+                    }
+                    drawCircle(
+                        color = Color.White,
+                        radius = if (isSelected) 10.dp.toPx() else 7.5.dp.toPx(),
+                        center = stPos
+                    )
+                    drawCircle(
+                        color = primaryLineColor,
+                        radius = if (isSelected) 7.dp.toPx() else 5.dp.toPx(),
+                        center = stPos,
+                        style = Stroke(width = 3.dp.toPx())
+                    )
+                }
+            }
+
+            // 1f. 终点大头针（仅在有规划路线或选中普通地点时显示）
+            val pinTarget = activeRoute?.destinationWgs84 ?: if (!isTransitStationExplore) selectedPlace?.wgs84 else null
             if (pinTarget != null) {
                 val destScreen = projectWgs84ToScreen(pinTarget, w, h)
                 drawCircle(
@@ -897,6 +1021,95 @@ fun InteractiveMapCanvas(
                 drawCircle(color = Color.White, radius = 14.dp.toPx(), center = destScreen)
                 drawCircle(color = IosRed, radius = 11.dp.toPx(), center = destScreen)
                 drawCircle(color = Color.White, radius = 4.5.dp.toPx(), center = destScreen)
+            }
+        }
+
+        // ==================== 1g. 公交地铁探索态：地图上可点击的周边地铁站/公交站实时电子气泡标 ====================
+        if (isTransitStationExplore && nearbyTransitStations.isNotEmpty()) {
+            val wPx = viewportSize.width.toFloat()
+            val hPx = viewportSize.height.toFloat()
+            nearbyTransitStations.forEach { station ->
+                val screenPos = projectWgs84ToScreen(station.wgs84Point, wPx, hPx)
+                if (screenPos.x in 40f..(wPx - 40f) && screenPos.y in 120f..(hPx - 180f)) {
+                    val isSelected = station.id == (selectedTransitStation?.id ?: nearbyTransitStations.firstOrNull()?.id)
+                    val firstLine = station.lines.firstOrNull()
+                    val lineColor = Color(firstLine?.badgeColorHex ?: 0xFF1677FF)
+                    val isSubway = station.stationType == "SUBWAY"
+                    val offsetX = with(density) { screenPos.x.toDp() - 68.dp }
+                    val offsetY = with(density) { screenPos.y.toDp() - if (isSelected) 54.dp else 44.dp }
+
+                    Surface(
+                        onClick = { onSelectTransitStation(station) },
+                        color = if (isSelected) Color(0xFF0F172A) else Color.White.copy(alpha = 0.96f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .offset(x = offsetX, y = offsetY)
+                            .shadow(if (isSelected) 12.dp else 5.dp, RoundedCornerShape(14.dp))
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) lineColor else lineColor.copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .testTag("map_transit_station_${station.id}")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .background(lineColor, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = if (isSubway) Icons.Default.DirectionsSubway else Icons.Default.DirectionsBus,
+                                        contentDescription = station.name,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = station.name,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isSelected) Color.White else Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Surface(
+                                    color = lineColor.copy(alpha = if (isSelected) 0.28f else 0.14f),
+                                    shape = RoundedCornerShape(5.dp)
+                                ) {
+                                    Text(
+                                        text = firstLine?.shortBadge ?: "地铁",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color(0xFF38BDF8) else lineColor,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.padding(top = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${firstLine?.nextArrivalMinutes ?: 2}分钟到站",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981)
+                                )
+                                Text(
+                                    text = " · 距您${station.distanceMeters}m",
+                                    fontSize = 9.sp,
+                                    color = if (isSelected) Color(0xFFCBD5E1) else Color(0xFF64748B)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1697,30 +1910,30 @@ private fun DrawScope.drawRealCoord3dBuildings(
     val endLonIdx = floor((centerLon + 0.016) / stepDeg).toInt()
 
     val roofColor = if (isDarkStyle) {
-        Color(0xFF2B3C54).copy(alpha = 0.72f)
+        Color(0xFF2B3C54).copy(alpha = 0.48f)
     } else {
-        Color.White.copy(alpha = 0.78f)
+        Color.White.copy(alpha = 0.46f)
     }
     val frontWallColor = if (isDarkStyle) {
-        Color(0xFF1F2D40).copy(alpha = 0.75f)
+        Color(0xFF1F2D40).copy(alpha = 0.52f)
     } else {
-        Color(0xFFE3ECF6).copy(alpha = 0.78f)
+        Color(0xFFE3ECF6).copy(alpha = 0.48f)
     }
     val sideWallColor = if (isDarkStyle) {
-        Color(0xFF162130).copy(alpha = 0.78f)
+        Color(0xFF162130).copy(alpha = 0.55f)
     } else {
-        Color(0xFFCFDCEB).copy(alpha = 0.78f)
+        Color(0xFFCFDCEB).copy(alpha = 0.50f)
     }
     val strokeColor = if (isDarkStyle) {
-        Color(0xFF4B6587).copy(alpha = 0.55f)
+        Color(0xFF4B6587).copy(alpha = 0.40f)
     } else {
-        Color(0xFFBAC8DA).copy(alpha = 0.70f)
+        Color(0xFFBAC8DA).copy(alpha = 0.48f)
     }
 
     for (latIdx in endLatIdx downTo startLatIdx) {
         for (lonIdx in startLonIdx..endLonIdx) {
             val hash = abs((latIdx * 73856093) xor (lonIdx * 19349663))
-            if (hash % 10 < 5) continue
+            if (hash % 10 < 6) continue
 
             val bLat = (latIdx + 0.35) * stepDeg
             val bLon = (lonIdx + 0.35) * stepDeg
@@ -1731,7 +1944,8 @@ private fun DrawScope.drawRealCoord3dBuildings(
             val sy = anchorY + ((pty - centerTileY) * scaledTilePx).toFloat()
 
             if (sx < -60f || sx > w + 60f || sy < -60f || sy > h + 60f) continue
-            if (abs(sx - w / 2f) < 72.dp.toPx()) continue
+            // 留出宽敞的中央道路与地标文字视廊，绝不遮挡高德底图汉字名称
+            if (abs(sx - w / 2f) < 118.dp.toPx()) continue
 
             val halfW = (18 + (hash % 16)).dp.toPx()
             val halfD = (14 + ((hash / 3) % 14)).dp.toPx()

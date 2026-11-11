@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 
 data class TelemetryState(
-    val currentWgs84: LatLngPoint = LatLngPoint(39.9087, 116.3975), // 默认北京天安门北侧起点
+    val currentWgs84: LatLngPoint = LatLngPoint(39.9098, 116.3962), // 默认北京南池子大街主路中心点
     val speedKmh: Float = 0f,
     val bearingDegrees: Float = 0f,
     val accuracyMeters: Float = 12f,
