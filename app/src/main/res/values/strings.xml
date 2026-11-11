@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">纯净导航</string>
+    <string name="app_subtitle">零广告 · 低功耗 · 双引擎导航</string>
+    <string name="tab_map">地图导航</string>
+    <string name="tab_saved">收藏与历史</string>
+    <string name="tab_opensource">开源方案与引擎</string>
+    <string name="search_placeholder">输入目的地（如：北京南站、深圳湾公园）</string>
+    <string name="btn_search">搜索</string>
+    <string name="btn_start_nav">开始实时导航</string>
+    <string name="btn_stop_nav">结束导航</string>
+    <string name="btn_hud_mode">车载 HUD</string>
+    <string name="btn_voice_guide">语音播报</string>
+    <string name="btn_recenter">回到当前位置</string>
+    <string name="mode_driving">驾车</string>
+    <string name="mode_cycling">骑行</string>
+    <string name="mode_walking">步行</string>
+    <string name="engine_tencent">腾讯地图 API (GCJ-02)</string>
+    <string name="engine_osm">开源 OSRM + OSM (WGS-84)</string>
+    <string name="permission_location_rationale">授予定位权限以获取实时 GPS 车速、航向角与当前起点坐标</string>
+    <string name="grant_location">授予定位</string>
+</resources>

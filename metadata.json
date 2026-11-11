@@ -1,0 +1,6 @@
+{
+  "name": "纯净导航",
+  "description": "零广告、低内存、高稳定的开源架构导航应用，支持腾讯位置服务 API 与 OpenStreetMap 双引擎切换及车载 HUD 导航",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
