@@ -161,7 +161,7 @@ fun IosExploreBottomSheet(
 
     val baseTargetHeight = when (uiState.sheetDetent) {
         SheetDetent.COLLAPSED -> 108.dp
-        SheetDetent.HALF -> if (uiState.travelMode == TravelMode.TRANSIT) 375.dp else 305.dp
+        SheetDetent.HALF -> 284.dp
         SheetDetent.EXPANDED -> 610.dp
     }
     val dragOffsetDp = with(density) { (-liveDragPx).toDp() }
@@ -174,10 +174,10 @@ fun IosExploreBottomSheet(
         label = "iosSheetHeight"
     )
 
-    val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val sheetShape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
 
     Surface(
-        color = Color(0xFFF5F5F8).copy(alpha = 0.97f),
+        color = Color(0xFFF2F2F7).copy(alpha = 0.96f),
         shape = sheetShape,
         modifier = Modifier
             .fillMaxWidth()
@@ -185,13 +185,11 @@ fun IosExploreBottomSheet(
             .shadow(
                 elevation = 24.dp,
                 shape = sheetShape,
-                ambientColor = Color.Black.copy(alpha = 0.22f)
+                ambientColor = Color.Black.copy(alpha = 0.16f)
             )
             .border(
-                width = 0.8.dp,
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.White.copy(alpha = 0.95f), Color.Transparent)
-                ),
+                width = 0.5.dp,
+                color = Color.White.copy(alpha = 0.92f),
                 shape = sheetShape
             )
     ) {
@@ -242,42 +240,42 @@ fun IosExploreBottomSheet(
                     modifier = Modifier
                         .width(36.dp)
                         .height(5.dp)
-                        .background(Color(0xFFC7C7CC), CircleShape)
+                        .background(Color(0x4D3C3C43), CircleShape)
                 )
             }
 
-            // iOS 18 搜索栏 + 右侧渐变引擎标识圆章
+            // iOS 18 搜索栏 + 右侧圆形账号/引擎圆章
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
                     color = Color(0x1F767680),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(11.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .height(40.dp)
+                        .height(38.dp)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 11.dp),
+                            .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             Icons.Default.Search,
                             contentDescription = "搜索",
-                            tint = IosSystemGray,
+                            tint = Color(0x993C3C43),
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(7.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Box(modifier = Modifier.weight(1f)) {
                             if (uiState.searchQuery.isEmpty()) {
                                 Text(
-                                    text = "搜索地点、公交地铁或长按地图选点",
-                                    color = IosSystemGray,
-                                    fontSize = 15.sp,
-                                    letterSpacing = (-0.2).sp,
+                                    text = "搜索地图",
+                                    color = Color(0x993C3C43),
+                                    fontSize = 16.sp,
+                                    letterSpacing = (-0.3).sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -288,8 +286,8 @@ fun IosExploreBottomSheet(
                                 singleLine = true,
                                 textStyle = TextStyle(
                                     color = Color(0xFF1C1C1E),
-                                    fontSize = 15.sp,
-                                    letterSpacing = (-0.2).sp
+                                    fontSize = 16.sp,
+                                    letterSpacing = (-0.3).sp
                                 ),
                                 cursorBrush = SolidColor(IosBlue),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -349,16 +347,12 @@ fun IosExploreBottomSheet(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                // 右侧渐变圆形引擎徽章（点击查看中国地图开源 vs 腾讯双引擎方案）
+                // 右侧纯正 iOS 18 轻透圆形引擎图标（点击查看双引擎与数据源设置）
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(Color(0xFF007AFF), Color(0xFF5856D6))
-                            )
-                        )
+                        .background(Color(0x1F767680))
                         .clickable { navViewModel.toggleEngineArchitectureSheet(true) }
                         .testTag("open_engine_settings_button"),
                     contentAlignment = Alignment.Center
@@ -371,9 +365,9 @@ fun IosExploreBottomSheet(
                             uiState.preferredEngine == NavEngineType.TENCENT_LBS -> "腾"
                             else -> "源"
                         },
-                        color = Color.White,
+                        color = IosBlue,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
@@ -508,116 +502,52 @@ fun IosExploreBottomSheet(
                 return@Column
             }
 
-            // 探索态主体内容：出行方式秒选栏 + 个人收藏 + 附近分类 + 最近路线
+            // 探索态主体内容：仅保留纯净苹果地图「个人收藏 + 周边探索 + 最近路线」，交通工具选型留待选定目的地后展示
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(bottom = 24.dp)
             ) {
-                // 0. 顶部四大出行方式预设胶囊（汽车 / 公交地铁 / 自行车 / 步行）
-                item {
-                    Surface(
-                        color = Color(0xFFE5E5EA),
-                        shape = RoundedCornerShape(11.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(3.dp)
-                        ) {
-                            TravelMode.entries.forEach { mode ->
-                                val selected = uiState.travelMode == mode
-                                Surface(
-                                    onClick = { navViewModel.selectTravelMode(mode) },
-                                    color = if (selected) IosCardLight else Color.Transparent,
-                                    shape = RoundedCornerShape(9.dp),
-                                    shadowElevation = if (selected) 2.dp else 0.dp,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(vertical = 7.dp),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = modeIcon(mode),
-                                            contentDescription = mode.label,
-                                            tint = if (selected) IosBlue else IosSystemGray,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = mode.label,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (selected) Color(0xFF1C1C1E) else IosSystemGray
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 0b. 公交地铁模式专属：周边地铁站与公交站实时电子站牌 + 线路首末班车 + 站口指引
-                if (uiState.travelMode == TravelMode.TRANSIT && uiState.nearbyTransitStations.isNotEmpty()) {
-                    item {
-                        TransitStationExplorerSection(
-                            stations = uiState.nearbyTransitStations,
-                            selectedStation = uiState.selectedTransitStation ?: uiState.nearbyTransitStations.first(),
-                            onSelectStation = { st -> navViewModel.selectTransitStation(st) },
-                            onWalkToStation = { st -> navViewModel.walkToTransitStation(st) }
-                        )
-                    }
-                }
-
-                // 1. 个人收藏 (Favorites)
+                // 1. iOS 18 个人收藏 (Favorites) InsetGrouped 卡片
                 item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 2.dp),
+                            .padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "个人收藏",
-                            fontSize = 14.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1C1C1E),
-                            letterSpacing = (-0.2).sp
+                            letterSpacing = (-0.3).sp
                         )
                         if (!hasLocationPermission) {
                             Text(
-                                text = "开启 GPS 定位",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                text = "开启定位",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
                                 color = IosBlue,
                                 modifier = Modifier
                                     .clickable { onRequestLocationPermission() }
                                     .testTag("grant_location_button")
                             )
-                        } else {
-                            Text(
-                                text = "点击直接规划${uiState.travelMode.label}路线",
-                                fontSize = 11.sp,
-                                color = IosSystemGray
-                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
-                        color = IosCardLight,
-                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White,
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(18.dp)
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
                             itemsIndexed(savedPlaces, key = { _, p -> "fav_${p.id}" }) { idx, place ->
-                                val palette = listOf(IosBlue, IosOrange, IosGreen, IosPurple, IosIndigo)
+                                val palette = listOf(IosBlue, IosOrange, Color(0xFF34C759), IosIndigo, IosPurple)
                                 val tint = palette[idx % palette.size]
                                 val icon = when (place.category) {
                                     "常用" -> Icons.Default.Work
@@ -627,7 +557,7 @@ fun IosExploreBottomSheet(
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
-                                        .width(68.dp)
+                                        .width(66.dp)
                                         .clickable {
                                             navViewModel.planRouteTo(
                                                 destName = place.title,
@@ -639,7 +569,7 @@ fun IosExploreBottomSheet(
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(50.dp)
+                                            .size(52.dp)
                                             .background(tint.copy(alpha = 0.14f), CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -647,14 +577,14 @@ fun IosExploreBottomSheet(
                                             icon,
                                             contentDescription = place.title,
                                             tint = tint,
-                                            modifier = Modifier.size(24.dp)
+                                            modifier = Modifier.size(25.dp)
                                         )
                                     }
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Spacer(modifier = Modifier.height(7.dp))
                                     Text(
                                         text = place.title,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Medium,
                                         color = Color(0xFF1C1C1E),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -662,7 +592,7 @@ fun IosExploreBottomSheet(
                                     )
                                     Text(
                                         text = place.category,
-                                        fontSize = 10.sp,
+                                        fontSize = 11.sp,
                                         color = IosSystemGray
                                     )
                                 }
@@ -867,7 +797,7 @@ fun IosPlaceDetailSheet(
     navViewModel: NavigationViewModel
 ) {
     val place = uiState.selectedPlace ?: return
-    val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val sheetShape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
     val distText = if (place.distanceMeters >= 1000) {
         String.format("%.1f 公里", place.distanceMeters / 1000.0)
     } else {
@@ -875,14 +805,14 @@ fun IosPlaceDetailSheet(
     }
 
     Surface(
-        color = Color(0xFFF5F5F8).copy(alpha = 0.98f),
+        color = Color(0xFFF2F2F7).copy(alpha = 0.96f),
         shape = sheetShape,
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(24.dp, sheetShape)
+            .shadow(24.dp, sheetShape, ambientColor = Color.Black.copy(alpha = 0.16f))
             .border(
-                0.8.dp,
-                Brush.verticalGradient(listOf(Color.White, Color.Transparent)),
+                0.5.dp,
+                Color.White.copy(alpha = 0.92f),
                 sheetShape
             )
     ) {
@@ -902,7 +832,7 @@ fun IosPlaceDetailSheet(
                     modifier = Modifier
                         .width(36.dp)
                         .height(5.dp)
-                        .background(Color(0xFFC7C7CC), CircleShape)
+                        .background(Color(0x4D3C3C43), CircleShape)
                 )
             }
 
@@ -929,7 +859,7 @@ fun IosPlaceDetailSheet(
 
                 Surface(
                     onClick = { navViewModel.closePlaceOrRouteBackToExplore() },
-                    color = Color(0xFFE3E3E8),
+                    color = Color(0x1F767680),
                     shape = CircleShape,
                     modifier = Modifier
                         .size(30.dp)
@@ -939,8 +869,8 @@ fun IosPlaceDetailSheet(
                         Icon(
                             Icons.Default.Close,
                             contentDescription = "关闭",
-                            tint = Color(0xFF636366),
-                            modifier = Modifier.size(17.dp)
+                            tint = Color(0x993C3C43),
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -1127,17 +1057,17 @@ fun IosRoutePreviewSheet(
     navViewModel: NavigationViewModel
 ) {
     val route = uiState.activeRoute
-    val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val sheetShape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
 
     Surface(
-        color = Color(0xFFF5F5F8).copy(alpha = 0.98f),
+        color = Color(0xFFF2F2F7).copy(alpha = 0.96f),
         shape = sheetShape,
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(24.dp, sheetShape)
+            .shadow(24.dp, sheetShape, ambientColor = Color.Black.copy(alpha = 0.16f))
             .border(
-                0.8.dp,
-                Brush.verticalGradient(listOf(Color.White, Color.Transparent)),
+                0.5.dp,
+                Color.White.copy(alpha = 0.92f),
                 sheetShape
             )
     ) {
@@ -1158,7 +1088,7 @@ fun IosRoutePreviewSheet(
                     modifier = Modifier
                         .width(36.dp)
                         .height(5.dp)
-                        .background(Color(0xFFC7C7CC), CircleShape)
+                        .background(Color(0x4D3C3C43), CircleShape)
                 )
             }
 
@@ -1205,7 +1135,7 @@ fun IosRoutePreviewSheet(
 
                 Surface(
                     onClick = { navViewModel.closePlaceOrRouteBackToExplore() },
-                    color = Color(0xFFE3E3E8),
+                    color = Color(0x1F767680),
                     shape = CircleShape,
                     modifier = Modifier
                         .size(30.dp)
@@ -1215,8 +1145,8 @@ fun IosRoutePreviewSheet(
                         Icon(
                             Icons.Default.Close,
                             contentDescription = "关闭路线",
-                            tint = Color(0xFF636366),
-                            modifier = Modifier.size(17.dp)
+                            tint = Color(0x993C3C43),
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -1226,7 +1156,7 @@ fun IosRoutePreviewSheet(
 
             // 2. iOS 四大出行模式分段滑块控制器：汽车 / 公交地铁 / 自行车 / 步行
             Surface(
-                color = Color(0xFFE3E3E8),
+                color = Color(0x1F767680),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -1239,9 +1169,9 @@ fun IosRoutePreviewSheet(
                         val selected = uiState.travelMode == mode
                         Surface(
                             onClick = { navViewModel.selectTravelMode(mode) },
-                            color = if (selected) IosCardLight else Color.Transparent,
+                            color = if (selected) Color.White else Color.Transparent,
                             shape = RoundedCornerShape(8.dp),
-                            shadowElevation = if (selected) 2.dp else 0.dp,
+                            shadowElevation = if (selected) 1.5.dp else 0.dp,
                             modifier = Modifier.weight(1f)
                         ) {
                             Row(
@@ -1252,15 +1182,15 @@ fun IosRoutePreviewSheet(
                                 Icon(
                                     imageVector = modeIcon(mode),
                                     contentDescription = mode.label,
-                                    tint = if (selected) IosBlue else IosSystemGray,
+                                    tint = if (selected) IosBlue else Color(0xFF636366),
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
-                                    text = mode.label,
+                                    text = shortModeLabel(mode),
                                     fontSize = 12.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (selected) Color(0xFF1C1C1E) else IosSystemGray
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (selected) Color(0xFF1C1C1E) else Color(0xFF636366)
                                 )
                             }
                         }
@@ -1564,33 +1494,37 @@ private fun IosRoadModeRouteCard(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Surface(
-                        onClick = { navViewModel.startRealNavigation(enableCruiseDemo = true) },
-                        color = Color(0xFFE9E9EE),
-                        shape = RoundedCornerShape(12.dp),
+                        onClick = { navViewModel.startRealNavigation(enableCruiseDemo = false) },
+                        color = Color(0xFFE5E5EA),
+                        shape = RoundedCornerShape(13.dp),
                         modifier = Modifier.testTag("start_cruise_demo_button")
                     ) {
                         Text(
-                            text = "模拟",
+                            text = "GPS",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = IosBlue,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                         )
                     }
 
                     Surface(
-                        onClick = { navViewModel.startRealNavigation(enableCruiseDemo = false) },
-                        color = IosGreen,
-                        shape = RoundedCornerShape(12.dp),
+                        onClick = { navViewModel.startRealNavigation(enableCruiseDemo = true) },
+                        color = Color(0xFF34C759),
+                        shape = RoundedCornerShape(13.dp),
                         modifier = Modifier.testTag("start_real_nav_button")
                     ) {
-                        Text(
-                            text = "出发",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "出发",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -1762,6 +1696,15 @@ private fun modeIcon(mode: TravelMode): ImageVector {
         TravelMode.TRANSIT -> Icons.Default.DirectionsSubway
         TravelMode.CYCLING -> Icons.AutoMirrored.Filled.DirectionsBike
         TravelMode.WALKING -> Icons.AutoMirrored.Filled.DirectionsWalk
+    }
+}
+
+private fun shortModeLabel(mode: TravelMode): String {
+    return when (mode) {
+        TravelMode.DRIVING -> "驾车"
+        TravelMode.TRANSIT -> "公交"
+        TravelMode.CYCLING -> "骑行"
+        TravelMode.WALKING -> "步行"
     }
 }
 
@@ -2271,65 +2214,56 @@ fun IosTopTurnByTurnBanner(
     }
     val steps = uiState.activeRoute?.steps ?: emptyList()
     val currentStep = steps.getOrNull(uiState.currentStepIndex)
-    val action = currentStep?.actionType ?: "左转"
+    val nextStep = steps.getOrNull(uiState.currentStepIndex + 1)
+    val action = currentStep?.actionType ?: "直行"
     val distMeters = if (uiState.activeRoute != null) {
-        uiState.distanceToNextTurnMeters.coerceAtLeast(15)
+        uiState.distanceToNextTurnMeters.coerceAtLeast(10)
     } else {
-        when (effectiveMode) {
-            TravelMode.WALKING -> 85
-            TravelMode.CYCLING -> 140
-            TravelMode.TRANSIT -> 260
-            TravelMode.DRIVING -> 129
-        }
+        120
     }
     val defaultRoad = when (effectiveMode) {
         TravelMode.WALKING -> "南池子人行步道"
         TravelMode.CYCLING -> "东华门非机动车道"
-        TravelMode.TRANSIT -> "地铁 4 号线大兴线"
+        TravelMode.TRANSIT -> "地铁换乘步行接驳"
         TravelMode.DRIVING -> "南池子大街"
     }
     val roadName = currentStep?.roadName?.takeIf { it.isNotBlank() && it != "无名道路" } ?: defaultRoad
 
-    val cardBgColor = when (effectiveMode) {
-        TravelMode.WALKING -> Color(0xFF0A382E).copy(alpha = 0.96f)
-        TravelMode.CYCLING -> Color(0xFF0D333B).copy(alpha = 0.96f)
-        TravelMode.TRANSIT -> Color(0xFF102A43).copy(alpha = 0.96f)
-        TravelMode.DRIVING -> Color(0xFF19212E).copy(alpha = 0.96f)
+    // iOS Apple Maps 导航顶栏配色：深炭黑（驾车/公交）与深果绿（步行/骑行）
+    val primaryBannerColor = when (effectiveMode) {
+        TravelMode.WALKING, TravelMode.CYCLING -> Color(0xFF134E2E).copy(alpha = 0.96f)
+        TravelMode.TRANSIT -> Color(0xFF1C2C3E).copy(alpha = 0.96f)
+        TravelMode.DRIVING -> Color(0xFF1C1C1E).copy(alpha = 0.95f)
+    }
+    val secondaryStripColor = when (effectiveMode) {
+        TravelMode.WALKING, TravelMode.CYCLING -> Color(0xFF0E3B23).copy(alpha = 0.98f)
+        TravelMode.TRANSIT -> Color(0xFF152230).copy(alpha = 0.98f)
+        TravelMode.DRIVING -> Color(0xFF2C2C2E).copy(alpha = 0.98f)
     }
 
-    val accentTint = when (effectiveMode) {
-        TravelMode.WALKING, TravelMode.CYCLING -> Color(0xFF10B981)
-        TravelMode.TRANSIT -> Color(0xFF06B6D4)
-        TravelMode.DRIVING -> Color(0xFF1677FF)
-    }
+    val bannerShape = RoundedCornerShape(22.dp)
 
     Surface(
-        color = cardBgColor,
-        shape = RoundedCornerShape(24.dp),
+        color = primaryBannerColor,
+        shape = bannerShape,
         modifier = modifier
             .fillMaxWidth()
-            .shadow(16.dp, RoundedCornerShape(24.dp))
-            .border(
-                1.dp,
-                Color.White.copy(alpha = 0.16f),
-                RoundedCornerShape(24.dp)
-            )
+            .shadow(18.dp, bannerShape, ambientColor = Color.Black.copy(alpha = 0.28f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.14f), bannerShape)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            // 第一行：模式专属图标/转向箭头 + 距离 + 道路/线路名称
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // 主诱导区：大转向图标 + 距离 + 路名 + 右侧单颗毛玻璃静音按钮
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (effectiveMode == TravelMode.TRANSIT) {
                     Box(
                         modifier = Modifier
                             .size(46.dp)
-                            .background(Color(0xFF0891B2), RoundedCornerShape(13.dp)),
+                            .background(IosBlue, RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -2344,181 +2278,120 @@ fun IosTopTurnByTurnBanner(
                         imageVector = when {
                             action.contains("右") -> Icons.Default.TurnRight
                             action.contains("掉头") -> Icons.Default.UTurnLeft
-                            action.contains("直") && uiState.activeRoute != null -> Icons.Default.Straight
+                            action.contains("直") -> Icons.Default.Straight
                             else -> Icons.Default.TurnLeft
                         },
                         contentDescription = action,
                         tint = Color.White,
-                        modifier = Modifier.size(50.dp)
+                        modifier = Modifier.size(46.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    if (distMeters >= 1000) {
-                        Text(
-                            text = String.format("%.1f", distMeters / 1000.0),
-                            fontSize = 38.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            letterSpacing = (-1).sp
-                        )
-                        Text(
-                            text = "km",
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFA7F3D0).takeIf { effectiveMode == TravelMode.WALKING } ?: Color(0xFF94A3B8),
-                            modifier = Modifier.padding(start = 2.dp, bottom = 5.dp)
-                        )
-                    } else {
-                        Text(
-                            text = "$distMeters",
-                            fontSize = 40.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            letterSpacing = (-1).sp
-                        )
-                        Text(
-                            text = "m",
-                            fontSize = 21.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFA7F3D0).takeIf { effectiveMode == TravelMode.WALKING } ?: Color(0xFF94A3B8),
-                            modifier = Modifier.padding(start = 2.dp, bottom = 5.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.padding(bottom = 4.dp)) {
-                        if (effectiveMode != TravelMode.DRIVING) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        if (distMeters >= 1000) {
                             Text(
-                                text = when (effectiveMode) {
-                                    TravelMode.WALKING -> "🚶 步行导航 · 人行横道/步道"
-                                    TravelMode.CYCLING -> "🚲 骑行导航 · 非机动车间道"
-                                    TravelMode.TRANSIT -> "🚇 公交地铁 · 站台换乘指引"
-                                    else -> ""
-                                },
-                                fontSize = 11.sp,
+                                text = String.format("%.1f", distMeters / 1000.0),
+                                fontSize = 32.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF6EE7B7).takeIf { effectiveMode != TravelMode.TRANSIT } ?: Color(0xFF67E8F9)
+                                color = Color.White,
+                                letterSpacing = (-0.8).sp
+                            )
+                            Text(
+                                text = " 公里",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFEBEBF5).copy(alpha = 0.72f),
+                                modifier = Modifier.padding(bottom = 3.dp)
+                            )
+                        } else {
+                            Text(
+                                text = "$distMeters",
+                                fontSize = 34.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                letterSpacing = (-0.8).sp
+                            )
+                            Text(
+                                text = " 米",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFEBEBF5).copy(alpha = 0.72f),
+                                modifier = Modifier.padding(bottom = 3.dp)
                             )
                         }
-                        Text(
-                            text = roadName,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                    }
+                    Text(
+                        text = roadName,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFEBEBF5),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Apple Maps 圆形毛玻璃语音开关
+                Surface(
+                    onClick = onToggleVoice,
+                    color = Color.White.copy(alpha = if (isVoiceEnabled) 0.16f else 0.08f),
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("toggle_voice_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (isVoiceEnabled) {
+                                Icons.AutoMirrored.Filled.VolumeUp
+                            } else {
+                                Icons.AutoMirrored.Filled.VolumeOff
+                            },
+                            contentDescription = if (isVoiceEnabled) "关闭语音" else "开启语音",
+                            tint = if (isVoiceEnabled) Color.White else Color.White.copy(alpha = 0.45f),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 第二行：根据出行模式定制的提示语 + 语音播报控制 + 状态守护
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    val line1 = when (effectiveMode) {
-                        TravelMode.WALKING -> "🧭 手持手机朝向绿光扇形"
-                        TravelMode.CYCLING -> "⛰️ 坡度平缓 · 绿道优先"
-                        TravelMode.TRANSIT -> "🚉 准点运行 · 站内换乘"
-                        TravelMode.DRIVING -> "ⓘ 位于当前道路"
-                    }
-                    val line2 = when (effectiveMode) {
-                        TravelMode.WALKING -> "💡 请走人行横道或过街天桥"
-                        TravelMode.CYCLING -> "💡 注意非机动车道右转车辆"
-                        TravelMode.TRANSIT -> "💡 请留意站台广播与出站口"
-                        TravelMode.DRIVING -> "💡 请注意前方路口"
-                    }
-                    Text(
-                        text = line1,
-                        fontSize = 11.sp,
-                        color = Color(0xFFE2E8F0),
-                        maxLines = 1
-                    )
-                    Text(
-                        text = line2,
-                        fontSize = 11.sp,
-                        color = Color(0xFFCBD5E1),
-                        maxLines = 1
-                    )
-                }
-
-                // 音量调节胶囊
-                Surface(
-                    onClick = onToggleVoice,
-                    color = Color.White,
-                    shape = RoundedCornerShape(14.dp),
+            // Apple Maps "随后" 下一动作提示条
+            if (nextStep != null) {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 10.dp)
-                        .height(40.dp)
-                        .testTag("toggle_voice_button")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeOff,
-                            contentDescription = "静音",
-                            tint = if (!isVoiceEnabled) accentTint else Color(0xFF1E293B),
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 8.dp)
-                                .height(4.dp)
-                                .background(Color(0xFFCBD5E1), CircleShape)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(if (isVoiceEnabled) 0.72f else 0.08f)
-                                    .height(4.dp)
-                                    .background(accentTint, CircleShape)
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "播报音量",
-                            tint = if (isVoiceEnabled) accentTint else Color(0xFF94A3B8),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                        .fillMaxWidth()
+                        .background(secondaryStripColor)
+                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isVoiceEnabled) "语音开启" else "已静音",
-                        fontSize = 11.sp,
-                        color = Color(0xFFCBD5E1)
+                        text = "随后",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFEBEBF5).copy(alpha = 0.68f)
                     )
-                    Text(
-                        text = when (effectiveMode) {
-                            TravelMode.WALKING -> "◎ 步频守护"
-                            TravelMode.CYCLING -> "◎ 骑行守护"
-                            TravelMode.TRANSIT -> "◎ 到站提醒"
-                            TravelMode.DRIVING -> "◎ 定位守护"
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = when {
+                            nextStep.actionType.contains("右") -> Icons.Default.TurnRight
+                            nextStep.actionType.contains("掉头") -> Icons.Default.UTurnLeft
+                            nextStep.actionType.contains("直") -> Icons.Default.Straight
+                            else -> Icons.Default.TurnLeft
                         },
-                        fontSize = 11.sp,
-                        color = Color(0xFF94A3B8)
+                        contentDescription = nextStep.actionType,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = nextStep.roadName.takeIf { it.isNotBlank() && it != "无名道路" } ?: nextStep.actionType,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -2527,11 +2400,7 @@ fun IosTopTurnByTurnBanner(
 }
 
 /**
- * ==================== 5. 模式自适应底部「白色圆角胶囊行程导航栏」 ====================
- * - 汽车模式：「10分钟 3.9公里 🚦5」+「上午11:44到达」
- * - 步行模式：「步行 11分钟 · 860米」+「约 1160步 · 消耗 45千卡 · 上午11:44到达」（绝不显示机动车红绿灯！）
- * - 骑行模式：「骑行 14分钟 · 3.8公里」+「爬升 12米 · 消耗 68千卡 · 上午11:44到达」
- * - 公交地铁：「全程 22分钟 · 5.2公里」+「步行接驳 410米 · 票价 ¥4 · 上午11:44到达」
+ * ==================== 5. 纯正 iOS 18 Apple Maps 底部导航控制栏 ====================
  */
 @Composable
 fun IosActiveNavigationBottomCard(
@@ -2540,205 +2409,125 @@ fun IosActiveNavigationBottomCard(
     onEndRoute: () -> Unit
 ) {
     val effectiveMode = uiState.activeRoute?.travelMode ?: uiState.travelMode
-    val distMeters = if (uiState.remainingDistanceMeters > 0) uiState.remainingDistanceMeters else 1200
-    val durSec = if (uiState.remainingDurationSeconds > 0) uiState.remainingDurationSeconds else 600
+    val distMeters = uiState.remainingDistanceMeters.coerceAtLeast(0)
+    val durSec = uiState.remainingDurationSeconds.coerceAtLeast(0)
 
-    val etaStr = remember(durSec) {
+    val etaClock = remember(durSec) {
         val etaMillis = System.currentTimeMillis() + durSec * 1000L
-        SimpleDateFormat("aaHH:mm到达", Locale.CHINA).format(Date(etaMillis))
+        SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(etaMillis))
     }
     val remMins = (durSec / 60).coerceAtLeast(1)
-    val distFormatted = if (distMeters >= 1000) {
-        String.format("%.1f公里", distMeters / 1000.0)
+    val distValue = if (distMeters >= 1000) {
+        String.format("%.1f", distMeters / 1000.0)
     } else {
-        "${distMeters}米"
+        "$distMeters"
     }
-    val lightsCount = uiState.activeRoute?.trafficLightsCount ?: 5
-    val kcal = uiState.activeRoute?.caloriesBurnedKcal ?: (distMeters * 0.05).toInt().coerceAtLeast(20)
-    val climbM = uiState.activeRoute?.elevationGainMeters ?: 12
+    val distUnit = if (distMeters >= 1000) "公里" else "米"
 
-    val capsuleShape = RoundedCornerShape(34.dp)
+    val cardShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
 
     Surface(
-        color = Color.White.copy(alpha = 0.98f),
-        shape = capsuleShape,
+        color = Color(0xFFF9F9FB).copy(alpha = 0.96f),
+        shape = cardShape,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 8.dp)
-            .shadow(20.dp, capsuleShape, ambientColor = Color.Black.copy(alpha = 0.20f))
-            .windowInsetsPadding(WindowInsets.navigationBars)
+            .shadow(20.dp, cardShape, ambientColor = Color.Black.copy(alpha = 0.16f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.92f), cardShape)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 18.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
-                    .width(42.dp)
+                    .width(36.dp)
                     .height(4.dp)
-                    .background(Color(0xFFD1D5DB), CircleShape)
+                    .background(Color(0x4D3C3C43), CircleShape)
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = onEndRoute,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .testTag("stop_nav_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "退出导航",
-                        tint = Color(0xFF111827),
-                        modifier = Modifier.size(30.dp)
+                // 1. 到达时间 / 剩余分钟 / 剩余里程三列紧凑 Apple 排版
+                Column(horizontalAlignment = Alignment.Start) {
+                    Text(
+                        text = if (distMeters == 0) "已到达" else etaClock,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1C1C1E),
+                        letterSpacing = (-0.4).sp
+                    )
+                    Text(
+                        text = "预计到达",
+                        fontSize = 11.sp,
+                        color = IosSystemGray
                     )
                 }
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    when (effectiveMode) {
-                        TravelMode.WALKING -> {
-                            val stepsEst = (distMeters * 1.35).toInt()
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.DirectionsWalk,
-                                    contentDescription = null,
-                                    tint = Color(0xFF059669),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "步行 ${remMins}分钟 · $distFormatted",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF065F46)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "约 ${stepsEst}步 · 消耗 ${kcal}千卡 · $etaStr",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
+                    Text(
+                        text = if (distMeters == 0) "0 分" else "$remMins 分",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (effectiveMode == TravelMode.WALKING || effectiveMode == TravelMode.CYCLING) {
+                            Color(0xFF248A3D)
+                        } else {
+                            Color(0xFF1C1C1E)
+                        },
+                        letterSpacing = (-0.4).sp
+                    )
+                    Text(
+                        text = "$distValue $distUnit",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = IosSystemGray
+                    )
+                }
 
-                        TravelMode.CYCLING -> {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.DirectionsBike,
-                                    contentDescription = null,
-                                    tint = Color(0xFF059669),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "骑行 ${remMins}分钟 · $distFormatted",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF065F46)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "爬升 ${climbM}米 · 消耗 ${kcal}千卡 · $etaStr",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
-
-                        TravelMode.TRANSIT -> {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.DirectionsSubway,
-                                    contentDescription = null,
-                                    tint = Color(0xFF0891B2),
-                                    modifier = Modifier.size(21.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "地铁公交 ${remMins}分钟 · $distFormatted",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF0E7490)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "准点率 99% · 站内换乘 · $etaStr",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF4B5563)
-                            )
-                        }
-
-                        TravelMode.DRIVING -> {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = "${remMins}分钟  $distFormatted  ",
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF111827),
-                                    letterSpacing = (-0.3).sp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.Traffic,
-                                    contentDescription = "红绿灯数量",
-                                    tint = Color(0xFF111827),
-                                    modifier = Modifier.size(19.dp)
-                                )
-                                Text(
-                                    text = "$lightsCount",
-                                    fontSize = 21.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF111827)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = etaStr,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF4B5563)
+                // 2. HUD全览小圆按钮 + Apple 红色「结束」胶囊按钮
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = onOpenHud,
+                        color = Color(0xFFE5E5EA),
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .testTag("open_hud_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Speed,
+                                contentDescription = "HUD 抬头显示",
+                                tint = Color(0xFF1C1C1E),
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     }
-                }
 
-                IconButton(
-                    onClick = onOpenHud,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .testTag("open_hud_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.UTurnLeft,
-                        contentDescription = "HUD与全览",
-                        tint = Color(0xFF111827),
-                        modifier = Modifier
-                            .size(28.dp)
-                            .graphicsLayer { rotationZ = 90f }
-                    )
+                    Surface(
+                        onClick = onEndRoute,
+                        color = Color(0xFFFF3B30).copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(19.dp),
+                        modifier = Modifier.testTag("stop_nav_button")
+                    ) {
+                        Text(
+                            text = "结束",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFF3B30),
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp)
+                        )
+                    }
                 }
             }
         }
@@ -2752,8 +2541,12 @@ fun IosActiveNavigationBottomCard(
 fun IosMapModeSelectorSheet(
     currentStyle: MapTileStyle,
     preferredEngine: NavEngineType,
+    useNativeAmap3d: Boolean,
+    hasAmapAndroidKey: Boolean,
+    isEmulatorEnv: Boolean,
     onSelectStyle: (MapTileStyle) -> Unit,
     onSelectEngine: (NavEngineType) -> Unit,
+    onToggleNativeAmap3d: (Boolean) -> Unit,
     onOpenArchitectureDetails: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2768,7 +2561,7 @@ fun IosMapModeSelectorSheet(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "地图模式与中国数据引擎",
+                text = "地图模式与渲染引擎",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1C1C1E)
@@ -2849,7 +2642,101 @@ fun IosMapModeSelectorSheet(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 地图渲染引擎切换：轻量安全底图 vs 高德原生 3D OpenGL 引擎
+        Text(
+            text = "地图渲染引擎",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = IosSystemGray
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Surface(
+            color = IosCardLight,
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        onClick = { onToggleNativeAmap3d(false) },
+                        color = if (!useNativeAmap3d) IosBlue else IosSystemGray6,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("select_lightweight_map_engine")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "轻量高清底图",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (!useNativeAmap3d) Color.White else Color(0xFF1C1C1E)
+                            )
+                            Text(
+                                text = "模拟器稳定 · 极速加载",
+                                fontSize = 10.sp,
+                                color = if (!useNativeAmap3d) Color.White.copy(alpha = 0.85f) else IosSystemGray
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { if (hasAmapAndroidKey) onToggleNativeAmap3d(true) },
+                        color = if (useNativeAmap3d && hasAmapAndroidKey) IosBlue else IosSystemGray6,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("select_amap_native_3d_engine")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "高德原生 3D",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    useNativeAmap3d && hasAmapAndroidKey -> Color.White
+                                    !hasAmapAndroidKey -> IosSystemGray
+                                    else -> Color(0xFF1C1C1E)
+                                }
+                            )
+                            Text(
+                                text = if (hasAmapAndroidKey) "真 3D 建筑 · 推荐真机" else "需配置 Android Key",
+                                fontSize = 10.sp,
+                                color = if (useNativeAmap3d && hasAmapAndroidKey) {
+                                    Color.White.copy(alpha = 0.85f)
+                                } else {
+                                    IosSystemGray
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = if (useNativeAmap3d) {
+                        "当前已开启高德官方原生 3D 建筑引擎（MapView）。如模拟器画面异常，可随时切回轻量高清底图。"
+                    } else {
+                        "当前为轻量高清底图（零原生 OpenGL 启动负载，最稳定）。点击右侧「高德原生 3D」可随时切换体验真 3D 建筑。"
+                    },
+                    fontSize = 11.sp,
+                    color = IosSystemGray,
+                    lineHeight = 15.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         Text(
             text = "中国地图算路与公交地铁数据源",

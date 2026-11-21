@@ -42,11 +42,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.remote.TravelMode
 import com.example.ui.IosSheetMode
 import com.example.ui.NavigationViewModel
 import com.example.ui.SheetDetent
 import com.example.ui.components.HudCockpitModal
-import com.example.ui.components.InteractiveMapCanvas
 import com.example.ui.components.IosActiveNavigationBottomCard
 import com.example.ui.components.IosExploreBottomSheet
 import com.example.ui.components.IosMapModeSelectorSheet
@@ -54,10 +54,14 @@ import com.example.ui.components.IosPlaceDetailSheet
 import com.example.ui.components.IosRoutePreviewSheet
 import com.example.ui.components.IosTopTurnByTurnBanner
 import com.example.ui.components.MapTileStyle
+import com.example.ui.components.PureNavMapHost
 import com.example.ui.screens.OpenSourceGuideScreen
 import com.example.ui.theme.IosBlue
 import com.example.ui.theme.IosSheetBgLight
 import com.example.ui.theme.MyApplicationTheme
+
+import com.example.ui.components.isAmapAndroidSdkKeyConfigured
+import com.example.ui.components.isVirtualEmulatorEnvironment
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +84,11 @@ fun PureNavIosApp(navViewModel: NavigationViewModel = viewModel()) {
     val savedPlaces by navViewModel.savedPlaces.collectAsStateWithLifecycle()
     val recentRoutes by navViewModel.recentRoutes.collectAsStateWithLifecycle()
 
+    val hasAmapAndroidKey = remember { isAmapAndroidSdkKeyConfigured() }
+    val isEmulatorEnv = remember { isVirtualEmulatorEnvironment() }
+    // 默认以零原生 OpenGL 负载的轻量高清底图冷启动，彻底排除云端模拟器 GPU 兼容问题；
+    // 进入界面后可在右上角「地图图层」或「3D」提示中一键开启高德原生 3D 建筑引擎。
+    var useNativeAmap3d by rememberSaveable { mutableStateOf(false) }
     var mapStyle by remember { mutableStateOf(MapTileStyle.CN_STREETS) }
     var expandRouteSteps by rememberSaveable { mutableStateOf(false) }
 
@@ -159,8 +168,12 @@ fun PureNavIosApp(navViewModel: NavigationViewModel = viewModel()) {
             IosMapModeSelectorSheet(
                 currentStyle = mapStyle,
                 preferredEngine = uiState.preferredEngine,
+                useNativeAmap3d = useNativeAmap3d,
+                hasAmapAndroidKey = hasAmapAndroidKey,
+                isEmulatorEnv = isEmulatorEnv,
                 onSelectStyle = { mapStyle = it },
                 onSelectEngine = { navViewModel.selectEngine(it) },
+                onToggleNativeAmap3d = { enabled -> useNativeAmap3d = enabled },
                 onOpenArchitectureDetails = {
                     navViewModel.toggleMapSettingsSheet(false)
                     navViewModel.toggleEngineArchitectureSheet(true)
@@ -212,18 +225,18 @@ fun PureNavIosApp(navViewModel: NavigationViewModel = viewModel()) {
     // 动态计算右下角天气微胶囊需要避让的抽屉高度
     val reservedBottomPadding = when (uiState.sheetMode) {
         IosSheetMode.EXPLORE -> when (uiState.sheetDetent) {
-            SheetDetent.COLLAPSED -> 96.dp
-            SheetDetent.HALF -> 350.dp
-            SheetDetent.EXPANDED -> 350.dp
+            SheetDetent.COLLAPSED -> 110.dp
+            SheetDetent.HALF -> 286.dp
+            SheetDetent.EXPANDED -> 612.dp
         }
-        IosSheetMode.PLACE_DETAIL -> 270.dp
-        IosSheetMode.ROUTE_PREVIEW -> 310.dp
-        IosSheetMode.ACTIVE_NAVIGATION -> 110.dp
+        IosSheetMode.PLACE_DETAIL -> 276.dp
+        IosSheetMode.ROUTE_PREVIEW -> 320.dp
+        IosSheetMode.ACTIVE_NAVIGATION -> 104.dp
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 全屏沉浸式高德 3D 车道级 / 步行罗盘 / 骑行绿道 / 2D 全览画布
-        InteractiveMapCanvas(
+        // 原生高德 Android 3D 地图 SDK（配置 AMAP_ANDROID_KEY 后启用真 3D 建筑群；未配置时优雅回退至高清瓦片底图）
+        PureNavMapHost(
             currentLocationWgs84 = telemetry.currentWgs84,
             bearingDegrees = telemetry.bearingDegrees,
             speedKmh = telemetry.speedKmh,
@@ -232,10 +245,13 @@ fun PureNavIosApp(navViewModel: NavigationViewModel = viewModel()) {
             activeRoute = uiState.activeRoute,
             isNavigating = uiState.isNavigating,
             is3dPitchEnabled = uiState.is3dPitchEnabled,
+            useNativeAmap3d = useNativeAmap3d,
             mapStyle = mapStyle,
             bottomSheetReservedPadding = reservedBottomPadding,
             onOpenMapSettings = { navViewModel.toggleMapSettingsSheet(true) },
             onToggle3dPitch = { navViewModel.toggle3dPitch() },
+            onSwitchToNative3d = { useNativeAmap3d = true },
+            onFallbackToLightweight = { useNativeAmap3d = false },
             onDropPinOnMap = { pt -> navViewModel.dropPinOnMap(pt) },
             nearbyTransitStations = uiState.nearbyTransitStations,
             selectedTransitStation = uiState.selectedTransitStation,
@@ -245,8 +261,8 @@ fun PureNavIosApp(navViewModel: NavigationViewModel = viewModel()) {
             modifier = Modifier.fillMaxSize()
         )
 
-        // 顶部高德同款深色圆角诱导大卡片 / 公交地铁实时电子站牌
-        if (uiState.is3dPitchEnabled || uiState.sheetMode == IosSheetMode.ACTIVE_NAVIGATION || uiState.travelMode.name == "TRANSIT") {
+        // 严格遵守：只有当用户点击「出发」真正进入导航状态（isNavigating == true && ACTIVE_NAVIGATION）时，才显示顶部转向诱导横幅
+        if (uiState.isNavigating && uiState.sheetMode == IosSheetMode.ACTIVE_NAVIGATION) {
             IosTopTurnByTurnBanner(
                 uiState = uiState,
                 isVoiceEnabled = telemetry.isVoiceEnabled,

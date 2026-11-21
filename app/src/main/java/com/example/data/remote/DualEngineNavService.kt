@@ -91,8 +91,8 @@ class DualEngineNavService {
         .build()
 
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
                 .header("User-Agent", "PureNav-Android-OpenSource/4.0")
@@ -100,6 +100,9 @@ class DualEngineNavService {
             chain.proceed(request)
         }
         .build()
+
+    private val routeCache = android.util.LruCache<String, CalculatedRoute>(24)
+    private val searchCache = android.util.LruCache<String, Pair<List<SearchPoiResult>, String>>(24)
 
     private val amapApi: AmapWebServiceApi = Retrofit.Builder()
         .baseUrl("https://restapi.amap.com/")
@@ -168,6 +171,11 @@ class DualEngineNavService {
         val cleanQuery = query.trim()
         if (cleanQuery.isEmpty()) return@withContext Pair(emptyList(), "")
 
+        val cacheKey = "${preferredEngine.name}|$cleanQuery|${String.format("%.3f,%.3f", centerWgs84.latitude, centerWgs84.longitude)}"
+        searchCache.get(cacheKey)?.let { cached ->
+            return@withContext cached
+        }
+
         var statusMsg = ""
         val gcjCenter = CoordinateUtils.wgs84ToGcj02(centerWgs84.latitude, centerWgs84.longitude)
         val amapKey = resolveAmapKey()
@@ -200,7 +208,9 @@ class DualEngineNavService {
                         )
                     }
                     if (list.isNotEmpty()) {
-                        return@withContext Pair(list, "高德开放平台返回 ${list.size} 条结果")
+                        val res = Pair(list, "高德开放平台返回 ${list.size} 条结果")
+                        searchCache.put(cacheKey, res)
+                        return@withContext res
                     }
                 } else {
                     statusMsg = "高德接口 (${resp.info})，已自动切换备用引擎"
@@ -286,6 +296,11 @@ class DualEngineNavService {
         mode: TravelMode,
         preferredEngine: NavEngineType
     ): CalculatedRoute = withContext(Dispatchers.IO) {
+        val routeCacheKey = "${preferredEngine.name}|${mode.name}|${String.format("%.4f,%.4f->%.4f,%.4f", originWgs84.latitude, originWgs84.longitude, destWgs84.latitude, destWgs84.longitude)}"
+        routeCache.get(routeCacheKey)?.let { cached ->
+            return@withContext cached
+        }
+
         var fallbackReason = ""
         val fromGcj = CoordinateUtils.wgs84ToGcj02(originWgs84.latitude, originWgs84.longitude)
         val toGcj = CoordinateUtils.wgs84ToGcj02(destWgs84.latitude, destWgs84.longitude)
@@ -343,7 +358,7 @@ class DualEngineNavService {
                     }
                     val lights = firstPath.trafficLights?.toIntOrNull() ?: max(2, totalDist / 850)
                     val (smoothPct, slowPct, congPct) = summarizeTrafficRatios(parsedSteps)
-                    return@withContext CalculatedRoute(
+                    val built = CalculatedRoute(
                         originName = originName,
                         destinationName = destName,
                         destinationAddress = destAddress,
@@ -368,6 +383,8 @@ class DualEngineNavService {
                         engineUsed = NavEngineType.AMAP_LBS,
                         engineNotice = "高德开放平台 Direction 实时路况算路"
                     )
+                    routeCache.put(routeCacheKey, built)
+                    return@withContext built
                 } else {
                     fallbackReason = "高德接口 (${resp.info})，已切换备用算路引擎"
                 }
@@ -539,7 +556,7 @@ class DualEngineNavService {
                 val transitPlans = buildChineseTransitOptions(originName, destName, distM)
                 val (smoothPct, slowPct, congPct) = summarizeTrafficRatios(steps)
 
-                return@withContext CalculatedRoute(
+                val builtOsrm = CalculatedRoute(
                     originName = originName,
                     destinationName = destName,
                     destinationAddress = destAddress,
@@ -575,6 +592,8 @@ class DualEngineNavService {
                         }
                     }
                 )
+                routeCache.put(routeCacheKey, builtOsrm)
+                return@withContext builtOsrm
             }
         } catch (_: Exception) {
             // Fall through to offline corridor

@@ -18,4 +18,7 @@
     <string name="engine_osm">开源 OSRM + OSM (WGS-84)</string>
     <string name="permission_location_rationale">授予定位权限以获取实时 GPS 车速、航向角与当前起点坐标</string>
     <string name="grant_location">授予定位</string>
+    <string name="guardian_title">安全守护与加密行踪</string>
+    <string name="guardian_sign_in_btn">使用 Google 账号登录并启用守护</string>
+    <string name="guardian_sign_out_btn">退出登录</string>
 </resources>

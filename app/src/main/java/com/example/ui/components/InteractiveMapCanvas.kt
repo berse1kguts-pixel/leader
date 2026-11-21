@@ -199,7 +199,7 @@ private data class TileRequestKey(
 }
 
 private object MapTileLoader {
-    private val cache = LruCache<String, ImageBitmap>(140)
+    private val cache = LruCache<String, ImageBitmap>(220)
     private val inFlight = HashSet<String>()
     private val loaderScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -207,8 +207,8 @@ private object MapTileLoader {
     val tileVersion: StateFlow<Int> = _tileVersion.asStateFlow()
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 
@@ -327,7 +327,7 @@ fun InteractiveMapCanvas(
     val baseTileSizePx = with(density) { 256.dp.toPx() }
     val tileVersion by MapTileLoader.tileVersion.collectAsState()
 
-    var continuousZoom by remember { mutableFloatStateOf(16.2f) }
+    var continuousZoom by remember { mutableFloatStateOf(15.4f) }
     var cameraCenterWgs84 by remember { mutableStateOf(currentLocationWgs84) }
     var trackingState by remember { mutableIntStateOf(1) }
     var viewportSize by remember { mutableStateOf(IntSize(1080, 1920)) }
@@ -336,21 +336,24 @@ fun InteractiveMapCanvas(
     val effectiveMode = activeRoute?.travelMode ?: travelMode
     val isTransitStationExplore = (effectiveMode == TravelMode.TRANSIT && activeRoute == null)
 
-    // 根据出行方式调整最佳 3D 俯仰角：公交地铁站点查询态使用清晰平视/微倾角（0°）以便清晰查看周围所有地铁站与公交站牌
+    // 2D 瓦片回退模式采用克制的满屏倾角，避免画布边缘缩进导致上半屏空白（真 3D 建筑由高德原生 Android 3D SDK 呈现）
     val targetPitchX = when {
-        !is3dPitchEnabled || isTransitStationExplore -> 0f
-        effectiveMode == TravelMode.WALKING -> 34f
-        effectiveMode == TravelMode.CYCLING -> 36f
-        effectiveMode == TravelMode.TRANSIT -> 22f
-        isNavigating -> 40f
-        else -> 38f
+        !is3dPitchEnabled -> 0f
+        isNavigating -> 24f
+        else -> 18f
     }
     val animatedPitchX by animateFloatAsState(
         targetValue = targetPitchX,
-        animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessLow),
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
         label = "pitchXAnim"
     )
-    val pitchFactor = (animatedPitchX / 44f).coerceIn(0f, 1.0f)
+    val pitchFactor = (animatedPitchX / 24f).coerceIn(0f, 1.0f)
+    // 动态焦点高度：探索态位于底抽屉上方可视地图正中；导航态下移至屏幕下方 2/3 处展现前方开阔路网
+    val anchorFractionY = if (isNavigating) {
+        0.50f + 0.18f * pitchFactor
+    } else {
+        0.35f + 0.11f * pitchFactor
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "realRouteFlow")
     val laneFlowPhase by infiniteTransition.animateFloat(
@@ -382,7 +385,6 @@ fun InteractiveMapCanvas(
                 TravelMode.DRIVING -> 16.4f
             }
         } else if (isTransitStationExplore) {
-            // 公交地铁站点探索模式：镜头聚焦在当前位置与所选地铁/公交站之间，清晰展示周边全网站点气泡
             trackingState = 0
             val stationPt = selectedTransitStation?.wgs84Point ?: currentLocationWgs84
             val midLat = (currentLocationWgs84.latitude * 0.45 + stationPt.latitude * 0.55)
@@ -391,7 +393,6 @@ fun InteractiveMapCanvas(
             continuousZoom = 15.5f
         } else if (activeRoute != null) {
             if (is3dPitchEnabled) {
-                // 3D 沉浸视角下始终将镜头锚定在用户与路线起点正中央，确保 3D 车模/行人紧贴车道中心线
                 trackingState = 1
                 cameraCenterWgs84 = currentLocationWgs84
                 continuousZoom = when (effectiveMode) {
@@ -401,7 +402,7 @@ fun InteractiveMapCanvas(
                     TravelMode.DRIVING -> 16.3f
                 }
             } else {
-                // 2D 平面全览模式下居中展示整条路线
+                // 路线规划预览态（ROUTE_PREVIEW）：居中展示从起点到终点的完整路线
                 trackingState = 0
                 val midLat = (activeRoute.originWgs84.latitude + activeRoute.destinationWgs84.latitude) / 2.0
                 val midLon = (activeRoute.originWgs84.longitude + activeRoute.destinationWgs84.longitude) / 2.0
@@ -412,14 +413,19 @@ fun InteractiveMapCanvas(
                     dist > 30_000 -> 11.4f
                     dist > 12_000 -> 13.2f
                     dist > 4_000 -> 14.6f
-                    dist > 1_500 -> 15.6f
-                    else -> 16.2f
+                    dist > 1_500 -> 15.4f
+                    else -> 15.8f
                 }
             }
         } else if (selectedPlace != null) {
             trackingState = 0
             cameraCenterWgs84 = selectedPlace.wgs84
-            continuousZoom = 16.2f
+            continuousZoom = if (is3dPitchEnabled) 16.5f else 16.0f
+        } else {
+            // 首页探索态：点击 3D 时自动拉近至街区建筑级视角，让 3D 立体建筑与透视道路即刻呈现
+            trackingState = 1
+            cameraCenterWgs84 = currentLocationWgs84
+            continuousZoom = if (is3dPitchEnabled) max(continuousZoom, 16.2f) else 15.4f
         }
     }
 
@@ -480,7 +486,7 @@ fun InteractiveMapCanvas(
         val layerPt = toLayerCoord(wgsPt)
         val ptx = lonToTileX(layerPt.longitude, n)
         val pty = latToTileY(layerPt.latitude, n)
-        val anchorY = heightPx * (0.50f + 0.16f * pitchFactor)
+        val anchorY = heightPx * anchorFractionY
         val sx = (widthPx / 2f) + ((ptx - centerTileX) * scaledTilePx).toFloat()
         val sy = anchorY + ((pty - centerTileY) * scaledTilePx).toFloat()
         return Offset(sx, sy)
@@ -514,7 +520,7 @@ fun InteractiveMapCanvas(
                         val curLayerPt = toLayerCoord(cameraCenterWgs84)
                         val cTx = lonToTileX(curLayerPt.longitude, curN)
                         val cTy = latToTileY(curLayerPt.latitude, curN)
-                        val anchorY = h * (0.50f + 0.16f * pitchFactor)
+                        val anchorY = h * anchorFractionY
 
                         val tapTileX = cTx + (tapOffset.x - w / 2f) / curTilePx
                         val tapTileY = (cTy + (tapOffset.y - anchorY) / curTilePx)
@@ -560,24 +566,24 @@ fun InteractiveMapCanvas(
                 }
             }
     ) {
-        // ==================== 1. 真实高德/OSM瓦片底图 + 模式专属 3D 路线渲染层 ====================
+        // ==================== 1. 真实高德/OSM瓦片回退底图 + 路线层 ====================
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    transformOrigin = TransformOrigin(0.5f, 0.64f)
+                    // 满屏覆盖的轻度透视，彻底杜绝顶部出现大面积留白
+                    transformOrigin = TransformOrigin(0.5f, 0.72f)
                     rotationX = animatedPitchX
-                    val overscanScale = 1f + pitchFactor * 0.36f
-                    scaleX = overscanScale
-                    scaleY = overscanScale * (1f + pitchFactor * 0.08f)
-                    cameraDistance = 14f * density.density
+                    scaleX = 1f + pitchFactor * 0.28f
+                    scaleY = 1f + pitchFactor * 0.42f
+                    cameraDistance = 12f
                 }
                 .testTag("interactive_map_canvas")
         ) {
             val currentVersion = tileVersion
             val w = size.width
             val h = size.height
-            val anchorY = h * (0.50f + 0.16f * pitchFactor)
+            val anchorY = h * anchorFractionY
 
             draw2dProceduralCityVectorMap(
                 w = w,
@@ -650,21 +656,7 @@ fun InteractiveMapCanvas(
                 }
             }
 
-            if (animatedPitchX > 8f && continuousZoom >= 14.2f) {
-                drawRealCoord3dBuildings(
-                    w = w,
-                    h = h,
-                    anchorY = anchorY,
-                    centerLat = cameraLayerCoord.latitude,
-                    centerLon = cameraLayerCoord.longitude,
-                    n = n,
-                    centerTileX = centerTileX,
-                    centerTileY = centerTileY,
-                    scaledTilePx = scaledTilePx,
-                    pitchFactor = pitchFactor,
-                    isDarkStyle = mapStyle.isDarkStyle
-                )
-            }
+            // 2D 栅格回退模式不再叠画假网格方块，保持底图清爽真实（真 3D 建筑由高德原生 3D SDK 渲染）
 
             // ==================== 1d. 四大出行模式专属真实路线绘制 ====================
             if (activeRoute != null && activeRoute.polylineWgs84.size >= 2) {
@@ -781,8 +773,8 @@ fun InteractiveMapCanvas(
                     }
 
                     TravelMode.DRIVING -> {
-                        // 【高德 3D 车道级驾车专属视觉】：三车道深色柏油路基 + 白色虚线分道线 + 双色高德蓝光带 + 实时路况彩虹叠层
-                        val isLaneLevelZoom = continuousZoom >= 14.5f && animatedPitchX > 8f
+                        // 仅在点击「出发」进入导航态（isNavigating == true）时才绘制 3D 三车道深色柏油路基；路线预览态仅绘制清爽 2D 全览路线
+                        val isLaneLevelZoom = isNavigating && continuousZoom >= 14.5f && animatedPitchX > 8f
                         if (isLaneLevelZoom) {
                             drawPath(
                                 path = routePath,
@@ -818,7 +810,7 @@ fun InteractiveMapCanvas(
                             path = routePath,
                             color = mapStyle.routeHaloColor,
                             style = Stroke(
-                                width = if (isLaneLevelZoom) 15.dp.toPx() else 13.5.dp.toPx(),
+                                width = if (isLaneLevelZoom) 15.dp.toPx() else 12.5.dp.toPx(),
                                 cap = StrokeCap.Round,
                                 join = StrokeJoin.Round
                             )
@@ -827,7 +819,7 @@ fun InteractiveMapCanvas(
                             path = routePath,
                             color = mapStyle.routePrimaryColor,
                             style = Stroke(
-                                width = if (isLaneLevelZoom) 11.5.dp.toPx() else 9.5.dp.toPx(),
+                                width = if (isLaneLevelZoom) 11.5.dp.toPx() else 9.0.dp.toPx(),
                                 cap = StrokeCap.Round,
                                 join = StrokeJoin.Round
                             )
@@ -850,7 +842,7 @@ fun InteractiveMapCanvas(
                                         color = trafficColor,
                                         start = screenPts[i],
                                         end = screenPts[i + 1],
-                                        strokeWidth = if (isLaneLevelZoom) 8.5.dp.toPx() else 7.5.dp.toPx(),
+                                        strokeWidth = if (isLaneLevelZoom) 8.5.dp.toPx() else 7.0.dp.toPx(),
                                         cap = StrokeCap.Round
                                     )
                                 }
@@ -859,7 +851,7 @@ fun InteractiveMapCanvas(
                     }
                 }
 
-                // 驾车与骑行模式绘制流动导流箭头
+                // 驾车与骑行模式绘制方向导流小箭头
                 if (effectiveMode == TravelMode.DRIVING || effectiveMode == TravelMode.CYCLING) {
                     val stepStride = max(1, screenPts.size / 14)
                     for (i in 0 until screenPts.size - 1 step stepStride) {
@@ -869,8 +861,9 @@ fun InteractiveMapCanvas(
                         val dy = p2.y - p1.y
                         val segLen = sqrt(dx * dx + dy * dy)
                         if (segLen > 14f) {
-                            val cx = p1.x + dx * laneFlowPhase
-                            val cy = p1.y + dy * laneFlowPhase
+                            val progressOffset = if (isNavigating) laneFlowPhase else 0.5f
+                            val cx = p1.x + dx * progressOffset
+                            val cy = p1.y + dy * progressOffset
                             val angleDeg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
                             rotate(degrees = angleDeg, pivot = Offset(cx, cy)) {
                                 val chev = 4.2.dp.toPx()
@@ -889,22 +882,24 @@ fun InteractiveMapCanvas(
                     }
                 }
 
-                // 真实路线下一路口 3D 转向大箭头（根据模式自动切换蓝边或翠绿边）
-                val upcomingStep = activeRoute.steps.getOrNull(currentStepIndex + 1)
-                    ?: activeRoute.steps.getOrNull(currentStepIndex)
-                if (upcomingStep != null && effectiveMode != TravelMode.TRANSIT) {
-                    val turnPtScreen = projectWgs84ToScreen(upcomingStep.startPoint, w, h)
-                    val borderColor = if (effectiveMode == TravelMode.WALKING || effectiveMode == TravelMode.CYCLING) {
-                        Color(0xFF059669)
-                    } else {
-                        Color(0xFF0088FF)
+                // 仅在按下「出发」真正进入导航态（isNavigating == true）时，才在下一路口绘制 3D 立体转向大箭头
+                if (isNavigating) {
+                    val upcomingStep = activeRoute.steps.getOrNull(currentStepIndex + 1)
+                        ?: activeRoute.steps.getOrNull(currentStepIndex)
+                    if (upcomingStep != null && effectiveMode != TravelMode.TRANSIT) {
+                        val turnPtScreen = projectWgs84ToScreen(upcomingStep.startPoint, w, h)
+                        val borderColor = if (effectiveMode == TravelMode.WALKING || effectiveMode == TravelMode.CYCLING) {
+                            Color(0xFF059669)
+                        } else {
+                            Color(0xFF0088FF)
+                        }
+                        drawRealTurn3dArrowOnMap(
+                            turnCenter = turnPtScreen,
+                            actionType = upcomingStep.actionType,
+                            roadBearingDeg = bearingDegrees,
+                            borderTint = borderColor
+                        )
                     }
-                    drawRealTurn3dArrowOnMap(
-                        turnCenter = turnPtScreen,
-                        actionType = upcomingStep.actionType,
-                        roadBearingDeg = bearingDegrees,
-                        borderTint = borderColor
-                    )
                 }
             }
 
@@ -1009,18 +1004,90 @@ fun InteractiveMapCanvas(
                 }
             }
 
-            // 1f. 终点大头针（仅在有规划路线或选中普通地点时显示）
+            // 1f. 起点圆标（「起」）与终点大头针（「终」）：在路线预览态与导航态清晰标示起止点
+            if (activeRoute != null && !isNavigating) {
+                val originScreen = projectWgs84ToScreen(activeRoute.originWgs84, w, h)
+                drawCircle(
+                    color = Color.Black.copy(alpha = 0.22f),
+                    radius = 12.dp.toPx(),
+                    center = Offset(originScreen.x, originScreen.y + 2.dp.toPx())
+                )
+                drawCircle(color = Color.White, radius = 13.dp.toPx(), center = originScreen)
+                drawCircle(color = Color(0xFF10B981), radius = 10.dp.toPx(), center = originScreen)
+                cardinalPaint.style = Paint.Style.FILL
+                cardinalPaint.color = android.graphics.Color.WHITE
+                cardinalPaint.textSize = 10.sp.toPx()
+                drawContext.canvas.nativeCanvas.drawText(
+                    "起",
+                    originScreen.x,
+                    originScreen.y + 3.5.dp.toPx(),
+                    cardinalPaint
+                )
+            }
+
             val pinTarget = activeRoute?.destinationWgs84 ?: if (!isTransitStationExplore) selectedPlace?.wgs84 else null
             if (pinTarget != null) {
                 val destScreen = projectWgs84ToScreen(pinTarget, w, h)
                 drawCircle(
                     color = Color.Black.copy(alpha = 0.28f),
-                    radius = 12.dp.toPx(),
+                    radius = 13.dp.toPx(),
                     center = Offset(destScreen.x, destScreen.y + 3.dp.toPx())
                 )
-                drawCircle(color = Color.White, radius = 14.dp.toPx(), center = destScreen)
-                drawCircle(color = IosRed, radius = 11.dp.toPx(), center = destScreen)
-                drawCircle(color = Color.White, radius = 4.5.dp.toPx(), center = destScreen)
+                drawCircle(color = Color.White, radius = 15.dp.toPx(), center = destScreen)
+                drawCircle(color = IosRed, radius = 12.dp.toPx(), center = destScreen)
+                cardinalPaint.style = Paint.Style.FILL
+                cardinalPaint.color = android.graphics.Color.WHITE
+                cardinalPaint.textSize = 10.sp.toPx()
+                drawContext.canvas.nativeCanvas.drawText(
+                    "终",
+                    destScreen.x,
+                    destScreen.y + 3.5.dp.toPx(),
+                    cardinalPaint
+                )
+            }
+
+            // 1f-2. 非导航态（探索/地点详情/路线预览）：将苹果地图蓝色定位圆点直接绘制在 3D 地面层，确保 3D 倾斜和平移时与道路 100% 严丝合缝
+            if (!isNavigating) {
+                val userGroundPos = projectWgs84ToScreen(currentLocationWgs84, w, h)
+                if (userGroundPos.x in -120f..(w + 120f) && userGroundPos.y in -120f..(h + 120f)) {
+                    val dotColor = when (effectiveMode) {
+                        TravelMode.WALKING, TravelMode.CYCLING -> Color(0xFF34C759)
+                        TravelMode.TRANSIT -> Color(0xFF0A84FF)
+                        TravelMode.DRIVING -> IosBlue
+                    }
+                    rotate(degrees = bearingDegrees, pivot = userGroundPos) {
+                        val headingCone = Path().apply {
+                            moveTo(userGroundPos.x, userGroundPos.y)
+                            lineTo(userGroundPos.x - 28.dp.toPx(), userGroundPos.y - 56.dp.toPx())
+                            lineTo(userGroundPos.x + 28.dp.toPx(), userGroundPos.y - 56.dp.toPx())
+                            close()
+                        }
+                        drawPath(
+                            path = headingCone,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    dotColor.copy(alpha = 0.0f),
+                                    dotColor.copy(alpha = 0.34f)
+                                ),
+                                startY = userGroundPos.y - 56.dp.toPx(),
+                                endY = userGroundPos.y
+                            )
+                        )
+                    }
+                    val pulseR = (18f + laneFlowPhase * 12f).dp.toPx()
+                    drawCircle(
+                        color = dotColor.copy(alpha = (1f - laneFlowPhase) * 0.24f),
+                        radius = pulseR,
+                        center = userGroundPos
+                    )
+                    drawCircle(
+                        color = Color.Black.copy(alpha = 0.18f),
+                        radius = 12.5.dp.toPx(),
+                        center = Offset(userGroundPos.x, userGroundPos.y + 2.dp.toPx())
+                    )
+                    drawCircle(color = Color.White, radius = 12.dp.toPx(), center = userGroundPos)
+                    drawCircle(color = dotColor, radius = 8.5.dp.toPx(), center = userGroundPos)
+                }
             }
         }
 
@@ -1030,7 +1097,7 @@ fun InteractiveMapCanvas(
             val hPx = viewportSize.height.toFloat()
             nearbyTransitStations.forEach { station ->
                 val screenPos = projectWgs84ToScreen(station.wgs84Point, wPx, hPx)
-                if (screenPos.x in 40f..(wPx - 40f) && screenPos.y in 120f..(hPx - 180f)) {
+                if (screenPos.x in 40f..(wPx - 40f) && screenPos.y in 80f..(hPx - 180f)) {
                     val isSelected = station.id == (selectedTransitStation?.id ?: nearbyTransitStations.firstOrNull()?.id)
                     val firstLine = station.lines.firstOrNull()
                     val lineColor = Color(firstLine?.badgeColorHex ?: 0xFF1677FF)
@@ -1113,18 +1180,17 @@ fun InteractiveMapCanvas(
             }
         }
 
-        // ==================== 2. 顶部 3D 天际线柔和天空雾化过渡带 ====================
-        if (animatedPitchX > 8f) {
+        // ==================== 2. 顶部极浅状态栏融合渐变（绝不遮白地图） ====================
+        if (animatedPitchX > 4f) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(90.dp)
+                    .height(64.dp)
                     .align(Alignment.TopCenter)
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                mapStyle.horizonSkyTopColor.copy(alpha = 0.88f),
-                                mapStyle.horizonSkyTopColor.copy(alpha = 0.40f),
+                                mapStyle.horizonSkyTopColor.copy(alpha = 0.38f * pitchFactor),
                                 Color.Transparent
                             )
                         )
@@ -1132,13 +1198,13 @@ fun InteractiveMapCanvas(
             )
         }
 
-        // ==================== 3. 模式专属 3D 定位模型层（汽车=3D珍珠白轿跑 / 步行=3D步行视野扇形+行人罗盘 / 自行车=3D骑行标 / 公交=轨道脉冲标） ====================
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-            val rawUserPos = projectWgs84ToScreen(currentLocationWgs84, w, h)
-            if (rawUserPos.x in -120f..(w + 120f) && rawUserPos.y in -120f..(h + 120f)) {
-                if (animatedPitchX > 8f) {
+        // ==================== 3. 实景导航 3D 车模/行人/单车罗盘层（仅点击「出发」进入导航态显示） ====================
+        if (isNavigating) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val rawUserPos = projectWgs84ToScreen(currentLocationWgs84, w, h)
+                if (rawUserPos.x in -120f..(w + 120f) && rawUserPos.y in -120f..(h + 120f)) {
                     when (effectiveMode) {
                         TravelMode.WALKING -> {
                             drawGaode3dWalkingCompassAndPedestrian(
@@ -1169,296 +1235,203 @@ fun InteractiveMapCanvas(
                             )
                         }
                     }
-                } else {
-                    val dotColor = when (effectiveMode) {
-                        TravelMode.WALKING, TravelMode.CYCLING -> Color(0xFF10B981)
-                        TravelMode.TRANSIT -> Color(0xFF06B6D4)
-                        TravelMode.DRIVING -> IosBlue
-                    }
-                    drawCircle(
-                        color = dotColor.copy(alpha = 0.18f),
-                        radius = 24.dp.toPx(),
-                        center = rawUserPos
-                    )
-                    drawCircle(color = Color.White, radius = 12.dp.toPx(), center = rawUserPos)
-                    drawCircle(color = dotColor, radius = 8.5.dp.toPx(), center = rawUserPos)
                 }
             }
         }
 
-        // ==================== 4. 左上角：模式专属仪表盘（汽车=车速+路况光柱；步行=计步器+卡路里；自行车=骑行表+海拔爬升；地铁=轨道准点圆章） ====================
-        val hasTopTurnBanner = is3dPitchEnabled || isNavigating
-        val speedoTopPadding = if (hasTopTurnBanner) 154.dp else 14.dp
+        // ==================== 4. 左上角：未出发保持极简呼吸感；仅按下「出发」后显示车速/步数仪表 ====================
+        val hasTopTurnBanner = isNavigating
+        val speedoTopPadding = if (hasTopTurnBanner) 134.dp else 48.dp
         Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = speedoTopPadding, start = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            horizontalAlignment = Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            when (effectiveMode) {
-                TravelMode.WALKING -> {
-                    val estSteps = ((activeRoute?.totalDistanceMeters ?: 860) * 1.35).roundToInt()
-                    val estKcal = activeRoute?.caloriesBurnedKcal ?: 45
+            if (!isNavigating) {
+                if (activeRoute != null) {
                     Surface(
-                        color = Color.White,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .size(74.dp)
-                            .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.20f))
-                            .border(1.5.dp, Color(0xFFA7F3D0), CircleShape)
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.DirectionsWalk,
-                                contentDescription = "步行导航",
-                                tint = Color(0xFF059669),
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Text(
-                                text = "$estSteps",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFF065F46)
-                            )
-                            Text(
-                                text = "预计步数",
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF10B981)
-                            )
-                        }
-                    }
-
-                    Surface(
-                        color = Color.White.copy(alpha = 0.95f),
+                        color = Color.White.copy(alpha = 0.88f),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
-                            .shadow(6.dp, RoundedCornerShape(14.dp))
-                            .border(1.dp, Color(0xFFD1FAE5), RoundedCornerShape(14.dp))
+                            .shadow(8.dp, RoundedCornerShape(14.dp), ambientColor = Color.Black.copy(alpha = 0.12f))
+                            .border(0.5.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(14.dp))
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.LocalFireDepartment,
-                                contentDescription = null,
-                                tint = IosOrange,
-                                modifier = Modifier.size(13.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(IosBlue, CircleShape)
                             )
-                            Spacer(modifier = Modifier.width(3.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "${estKcal}千卡",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E293B)
-                            )
-                        }
-                    }
-                }
-
-                TravelMode.CYCLING -> {
-                    val climbM = activeRoute?.elevationGainMeters ?: 12
-                    Surface(
-                        color = Color.White,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.20f))
-                            .border(1.5.dp, Color(0xFF6EE7B7), CircleShape)
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.DirectionsBike,
-                                contentDescription = "骑行速度",
-                                tint = Color(0xFF059669),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = if (speedKmh >= 1f) "${speedKmh.roundToInt()}" else "16",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFF059669)
-                            )
-                            Text(
-                                text = "km/h",
-                                fontSize = 10.sp,
+                                text = "路线全览 · 请点击「出发」",
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF10B981)
-                            )
-                        }
-                    }
-
-                    Surface(
-                        color = Color.White.copy(alpha = 0.95f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .shadow(6.dp, RoundedCornerShape(14.dp))
-                            .border(1.dp, Color(0xFFD1FAE5), RoundedCornerShape(14.dp))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Terrain,
-                                contentDescription = null,
-                                tint = Color(0xFF059669),
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "爬升${climbM}m",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E293B)
+                                color = Color(0xFF1C1C1E)
                             )
                         }
                     }
                 }
-
-                TravelMode.TRANSIT -> {
-                    Surface(
-                        color = Color.White,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.20f))
-                            .border(1.5.dp, Color(0xFFA5F3FC), CircleShape)
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DirectionsSubway,
-                                contentDescription = "公交地铁",
-                                tint = Color(0xFF0891B2),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "地铁公交",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFF0E7490)
-                            )
-                        }
-                    }
-                }
-
-                TravelMode.DRIVING -> {
-                    Surface(
-                        color = Color.White,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.22f))
-                            .border(1.dp, Color(0xFFE6ECF5), CircleShape)
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            if (speedKmh >= 1f) {
-                                Text(
-                                    text = "${speedKmh.roundToInt()}",
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF1677FF),
-                                    letterSpacing = (-0.5).sp
-                                )
-                            } else {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(vertical = 7.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(14.dp)
-                                            .height(4.dp)
-                                            .background(Color(0xFF1677FF), RoundedCornerShape(1.dp))
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .width(14.dp)
-                                            .height(4.dp)
-                                            .background(Color(0xFF1677FF), RoundedCornerShape(1.dp))
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "km/h",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF3B78D8)
-                            )
-                        }
-                    }
-
-                    // 仅在汽车驾车模式下展示「全程实时路况彩虹光柱条」
-                    if (isTrafficOverlayEnabled && activeRoute != null) {
+            } else {
+                when (effectiveMode) {
+                    TravelMode.WALKING -> {
+                        val estSteps = ((activeRoute?.totalDistanceMeters ?: 860) * 1.35).roundToInt()
                         Surface(
-                            color = Color.White.copy(alpha = 0.95f),
-                            shape = RoundedCornerShape(14.dp),
+                            color = Color.White.copy(alpha = 0.92f),
+                            shape = CircleShape,
                             modifier = Modifier
-                                .width(24.dp)
-                                .height(144.dp)
-                                .shadow(8.dp, RoundedCornerShape(14.dp))
-                                .border(1.5.dp, Color.White, RoundedCornerShape(14.dp))
+                                .size(62.dp)
+                                .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.16f))
+                                .border(0.5.dp, Color.White, CircleShape)
                         ) {
                             Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(3.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                val smoothWeight = activeRoute.smoothPercent.coerceAtLeast(10).toFloat()
-                                val slowWeight = activeRoute.slowPercent.coerceAtLeast(5).toFloat()
-                                val congWeight = activeRoute.congestedPercent.coerceAtLeast(3).toFloat()
+                                Text(
+                                    text = "$estSteps",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1C1C1E)
+                                )
+                                Text(
+                                    text = "步",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF34C759)
+                                )
+                            }
+                        }
+                    }
 
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(smoothWeight * 0.5f)
-                                        .background(
-                                            Color(0xFF10B981),
-                                            RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)
-                                        )
+                    TravelMode.CYCLING -> {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.92f),
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(62.dp)
+                                .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.16f))
+                                .border(0.5.dp, Color.White, CircleShape)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = if (speedKmh >= 1f) "${speedKmh.roundToInt()}" else "16",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1C1C1E)
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(congWeight)
-                                        .background(Color(0xFFEF4444))
+                                Text(
+                                    text = "km/h",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF34C759)
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(slowWeight)
-                                        .background(Color(0xFFF59E0B))
+                            }
+                        }
+                    }
+
+                    TravelMode.TRANSIT -> {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.92f),
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.16f))
+                                .border(0.5.dp, Color.White, CircleShape)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.DirectionsSubway,
+                                    contentDescription = "公交地铁",
+                                    tint = IosBlue,
+                                    modifier = Modifier.size(24.dp)
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(smoothWeight * 0.5f)
-                                        .background(
-                                            Color(0xFF10B981),
-                                            RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp)
-                                        )
+                            }
+                        }
+                    }
+
+                    TravelMode.DRIVING -> {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.92f),
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(62.dp)
+                                .shadow(10.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.16f))
+                                .border(0.5.dp, Color.White, CircleShape)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = if (speedKmh >= 1f) "${speedKmh.roundToInt()}" else "0",
+                                    fontSize = 21.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1C1C1E),
+                                    letterSpacing = (-0.5).sp
                                 )
+                                Text(
+                                    text = "km/h",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = IosSystemGray
+                                )
+                            }
+                        }
+
+                        if (isTrafficOverlayEnabled && activeRoute != null) {
+                            Surface(
+                                color = Color.White.copy(alpha = 0.92f),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .width(12.dp)
+                                    .height(110.dp)
+                                    .shadow(6.dp, RoundedCornerShape(10.dp))
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(2.dp)
+                                ) {
+                                    val smoothWeight = activeRoute.smoothPercent.coerceAtLeast(10).toFloat()
+                                    val slowWeight = activeRoute.slowPercent.coerceAtLeast(5).toFloat()
+                                    val congWeight = activeRoute.congestedPercent.coerceAtLeast(3).toFloat()
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .weight(smoothWeight * 0.5f)
+                                            .background(Color(0xFF34C759), RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .weight(congWeight)
+                                            .background(Color(0xFFFF3B30))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .weight(slowWeight)
+                                            .background(Color(0xFFFF9500))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .weight(smoothWeight * 0.5f)
+                                            .background(Color(0xFF34C759), RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
+                                    )
+                                }
                             }
                         }
                     }
@@ -1466,154 +1439,136 @@ fun InteractiveMapCanvas(
             }
         }
 
-        // ==================== 5. 右上角：模式状态徽章 + 实时路况开关 + 3D/2D 工具栏 ====================
-        val rightTopPadding = if (hasTopTurnBanner) 154.dp else 14.dp
-        Column(
+        // ==================== 5. 右上角：纯正 iOS 18 苹果地图毛玻璃竖条工具胶囊（地图图层 + 定位 + 3D/2D） ====================
+        val rightTopPadding = if (hasTopTurnBanner) 134.dp else 48.dp
+        val glassSurfaceColor = if (mapStyle.isDarkStyle) {
+            Color(0xFF1C1C1E).copy(alpha = 0.86f)
+        } else {
+            Color(0xFFFDFDFD).copy(alpha = 0.88f)
+        }
+        val primaryIconTint = if (mapStyle.isDarkStyle) Color.White else Color(0xFF1C1C1E)
+
+        Surface(
+            color = glassSurfaceColor,
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = rightTopPadding, end = 12.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(top = rightTopPadding, end = 12.dp)
+                .width(44.dp)
+                .shadow(10.dp, RoundedCornerShape(12.dp), ambientColor = Color.Black.copy(alpha = 0.14f))
+                .border(0.5.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
         ) {
-            val modeBadgeText = when (effectiveMode) {
-                TravelMode.WALKING -> "步行罗盘·人行步道"
-                TravelMode.CYCLING -> "骑行绿道·坡度辅助"
-                TravelMode.TRANSIT -> "地铁公交·实时换乘"
-                TravelMode.DRIVING -> if (isTrafficOverlayEnabled) "实时路况·已开启" else "高德瓦片·3D"
-            }
-            val modeBadgeTint = when (effectiveMode) {
-                TravelMode.WALKING, TravelMode.CYCLING -> Color(0xFF059669)
-                TravelMode.TRANSIT -> Color(0xFF0891B2)
-                TravelMode.DRIVING -> if (isTrafficOverlayEnabled) Color(0xFF10B981) else Color(0xFF1677FF)
-            }
-
-            Surface(
-                color = Color.White.copy(alpha = 0.92f),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .shadow(4.dp, RoundedCornerShape(16.dp))
-                    .clickable { onToggle3dPitch() }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clickable { onOpenMapSettings() }
+                        .testTag("switch_map_style_button"),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = modeBadgeText,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1E293B)
+                    Icon(
+                        Icons.Default.Map,
+                        contentDescription = "选择地图",
+                        tint = primaryIconTint.copy(alpha = 0.82f),
+                        modifier = Modifier.size(19.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .background(modeBadgeTint, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(11.dp)
+                }
+
+                HorizontalDivider(
+                    color = Color(0xFF3C3C43).copy(alpha = 0.16f),
+                    thickness = 0.5.dp
+                )
+
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clickable {
+                            trackingState = 1
+                            cameraCenterWgs84 = currentLocationWgs84
+                        }
+                        .testTag("recenter_map_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (trackingState >= 1) Icons.Default.NearMe else Icons.Outlined.NearMe,
+                        contentDescription = "定位回正",
+                        tint = IosBlue,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                HorizontalDivider(
+                    color = Color(0xFF3C3C43).copy(alpha = 0.16f),
+                    thickness = 0.5.dp
+                )
+
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clickable { onToggle3dPitch() }
+                        .testTag("toggle_3d_pitch_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (is3dPitchEnabled) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .background(IosBlue, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "3D",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "3D",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = primaryIconTint.copy(alpha = 0.80f)
                         )
                     }
                 }
             }
+        }
 
-            val glassSurfaceColor = if (mapStyle.isDarkStyle) {
-                Color(0xFF242426).copy(alpha = 0.90f)
-            } else {
-                Color.White.copy(alpha = 0.94f)
-            }
-            val primaryIconTint = if (mapStyle.isDarkStyle) Color.White else Color(0xFF1C1C1E)
-
+        // ==================== 6. 右下角：Apple Maps 标志性紧凑型天气与空气质量毛玻璃微胶囊 ====================
+        if (!isNavigating) {
             Surface(
                 color = glassSurfaceColor,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
-                    .width(42.dp)
-                    .shadow(7.dp, RoundedCornerShape(12.dp))
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = bottomSheetReservedPadding + 10.dp)
+                    .shadow(6.dp, RoundedCornerShape(10.dp), ambientColor = Color.Black.copy(alpha = 0.12f))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.75f), RoundedCornerShape(10.dp))
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clickable { onOpenMapSettings() }
-                            .testTag("switch_map_style_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.Map,
-                            contentDescription = "选择地图模式",
-                            tint = primaryIconTint.copy(alpha = 0.85f),
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-
-                    HorizontalDivider(
-                        color = IosSystemGray.copy(alpha = 0.2f),
-                        thickness = 0.5.dp,
-                        modifier = Modifier.padding(horizontal = 6.dp)
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clickable {
-                                trackingState = 1
-                                cameraCenterWgs84 = currentLocationWgs84
-                            }
-                            .testTag("recenter_map_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (trackingState >= 1) Icons.Default.NearMe else Icons.Outlined.NearMe,
-                            contentDescription = "定位回正",
-                            tint = Color(0xFF1677FF),
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-                }
-            }
-
-            if (effectiveMode == TravelMode.DRIVING) {
-                Surface(
-                    onClick = { isTrafficOverlayEnabled = !isTrafficOverlayEnabled },
-                    color = if (isTrafficOverlayEnabled) Color(0xFF10B981) else glassSurfaceColor,
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .shadow(7.dp, CircleShape)
-                        .testTag("toggle_traffic_button")
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "☀ 23°",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = primaryIconTint
+                    )
+                    Surface(
+                        color = Color(0xFF34C759).copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
                         Text(
-                            text = "路况",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (isTrafficOverlayEnabled) Color.White else primaryIconTint
+                            text = "优",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF248A3D),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                         )
                     }
-                }
-            }
-
-            Surface(
-                onClick = onToggle3dPitch,
-                color = if (is3dPitchEnabled) Color(0xFF1677FF) else glassSurfaceColor,
-                shape = CircleShape,
-                modifier = Modifier
-                    .size(42.dp)
-                    .shadow(7.dp, CircleShape)
-                    .testTag("toggle_3d_pitch_button")
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (is3dPitchEnabled) "3D" else "2D",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = if (is3dPitchEnabled) Color.White else primaryIconTint
-                    )
                 }
             }
         }
@@ -1903,55 +1858,77 @@ private fun DrawScope.drawRealCoord3dBuildings(
     pitchFactor: Float,
     isDarkStyle: Boolean
 ) {
-    val stepDeg = 0.0028
-    val startLatIdx = floor((centerLat - 0.014) / stepDeg).toInt()
-    val endLatIdx = floor((centerLat + 0.014) / stepDeg).toInt()
+    // 苹果地图 3D 城市建筑群：高密度真实坐标网格 + 强视角辐射视差 + 地面投影 + 双面光影与玻璃幕墙高楼
+    val stepDeg = 0.0017
+    val startLatIdx = floor((centerLat - 0.015) / stepDeg).toInt()
+    val endLatIdx = floor((centerLat + 0.015) / stepDeg).toInt()
     val startLonIdx = floor((centerLon - 0.016) / stepDeg).toInt()
     val endLonIdx = floor((centerLon + 0.016) / stepDeg).toInt()
 
-    val roofColor = if (isDarkStyle) {
-        Color(0xFF2B3C54).copy(alpha = 0.48f)
+    val shadowColor = if (isDarkStyle) {
+        Color.Black.copy(alpha = 0.48f * pitchFactor)
     } else {
-        Color.White.copy(alpha = 0.46f)
+        Color(0xFF0F172A).copy(alpha = 0.20f * pitchFactor)
     }
-    val frontWallColor = if (isDarkStyle) {
-        Color(0xFF1F2D40).copy(alpha = 0.52f)
-    } else {
-        Color(0xFFE3ECF6).copy(alpha = 0.48f)
-    }
-    val sideWallColor = if (isDarkStyle) {
-        Color(0xFF162130).copy(alpha = 0.55f)
-    } else {
-        Color(0xFFCFDCEB).copy(alpha = 0.50f)
-    }
-    val strokeColor = if (isDarkStyle) {
-        Color(0xFF4B6587).copy(alpha = 0.40f)
-    } else {
-        Color(0xFFBAC8DA).copy(alpha = 0.48f)
-    }
+
+    val stdRoofColor = if (isDarkStyle) Color(0xFF334155).copy(alpha = 0.96f) else Color(0xFFFFFFFF).copy(alpha = 0.96f)
+    val stdFrontColor = if (isDarkStyle) Color(0xFF233044).copy(alpha = 0.96f) else Color(0xFFDCE3EE).copy(alpha = 0.96f)
+    val stdSideColor = if (isDarkStyle) Color(0xFF172030).copy(alpha = 0.96f) else Color(0xFFB4C3D6).copy(alpha = 0.96f)
+    val stdStrokeColor = if (isDarkStyle) Color(0xFF546C8C).copy(alpha = 0.72f) else Color(0xFF9FB0C6).copy(alpha = 0.90f)
+
+    // 玻璃幕墙摩天大楼配色（Apple Maps 现代地标感）
+    val glassRoofColor = if (isDarkStyle) Color(0xFF3A4E6A).copy(alpha = 0.97f) else Color(0xFFF0F7FF).copy(alpha = 0.97f)
+    val glassFrontColor = if (isDarkStyle) Color(0xFF1F324D).copy(alpha = 0.97f) else Color(0xFFC8DEF5).copy(alpha = 0.97f)
+    val glassSideColor = if (isDarkStyle) Color(0xFF152338).copy(alpha = 0.97f) else Color(0xFF9BBEE3).copy(alpha = 0.97f)
+    val windowStripColor = if (isDarkStyle) Color(0xFF60A5FA).copy(alpha = 0.34f) else Color.White.copy(alpha = 0.58f)
+
+    // 历史建筑暖砂岩屋顶（故宫/王府井周边氛围）
+    val warmRoofColor = if (isDarkStyle) Color(0xFF42362C).copy(alpha = 0.94f) else Color(0xFFF7F0E6).copy(alpha = 0.95f)
+    val warmFrontColor = if (isDarkStyle) Color(0xFF2D251E).copy(alpha = 0.95f) else Color(0xFFE2D6C5).copy(alpha = 0.95f)
+    val warmSideColor = if (isDarkStyle) Color(0xFF1F1914).copy(alpha = 0.96f) else Color(0xFFC7B8A4).copy(alpha = 0.95f)
 
     for (latIdx in endLatIdx downTo startLatIdx) {
         for (lonIdx in startLonIdx..endLonIdx) {
             val hash = abs((latIdx * 73856093) xor (lonIdx * 19349663))
-            if (hash % 10 < 6) continue
+            // 约 68% 街区生成建筑，打造错落有致的城市天际线
+            if (hash % 10 < 3) continue
 
-            val bLat = (latIdx + 0.35) * stepDeg
-            val bLon = (lonIdx + 0.35) * stepDeg
+            val jitterLat = ((hash % 17) - 8) * 0.000035
+            val jitterLon = (((hash / 7) % 17) - 8) * 0.000035
+            val bLat = (latIdx + 0.42) * stepDeg + jitterLat
+            val bLon = (lonIdx + 0.42) * stepDeg + jitterLon
 
             val ptx = lonToTileX(bLon, n)
             val pty = latToTileY(bLat, n)
             val sx = (w / 2f) + ((ptx - centerTileX) * scaledTilePx).toFloat()
             val sy = anchorY + ((pty - centerTileY) * scaledTilePx).toFloat()
 
-            if (sx < -60f || sx > w + 60f || sy < -60f || sy > h + 60f) continue
-            // 留出宽敞的中央道路与地标文字视廊，绝不遮挡高德底图汉字名称
-            if (abs(sx - w / 2f) < 118.dp.toPx()) continue
+            if (sx < -80f || sx > w + 80f || sy < -80f || sy > h + 80f) continue
+            // 仅避开用户圆点脚下极小圆区，让道路两侧建筑立体林立
+            if (abs(sx - w / 2f) < 32.dp.toPx() && abs(sy - anchorY) < 62.dp.toPx()) continue
 
-            val halfW = (18 + (hash % 16)).dp.toPx()
-            val halfD = (14 + ((hash / 3) % 14)).dp.toPx()
-            val heightPx = (24 + (hash % 36)).dp.toPx() * pitchFactor
+            val isTallTower = (hash % 6 == 0)
+            val isWarmBlock = (!isTallTower && hash % 5 == 0)
 
-            val extrudeX = if (sx < w / 2f) -heightPx * 0.14f else heightPx * 0.14f
+            val halfW = when {
+                isTallTower -> (16 + (hash % 12)).dp.toPx()
+                else -> (14 + (hash % 13)).dp.toPx()
+            }
+            val halfD = when {
+                isTallTower -> (13 + ((hash / 3) % 10)).dp.toPx()
+                else -> (11 + ((hash / 3) % 11)).dp.toPx()
+            }
+            val baseHeightDp = when {
+                isTallTower -> 66f + (hash % 46)
+                isWarmBlock -> 26f + (hash % 20)
+                else -> 34f + (hash % 32)
+            }
+            val heightPx = baseHeightDp.dp.toPx() * pitchFactor
+            if (heightPx < 3f) continue
+
+            // 强透视辐射视差：高楼随画面偏心位置产生真实立体张角
+            val normalizedOffsetX = ((sx - w / 2f) / (w * 0.5f)).coerceIn(-1.25f, 1.25f)
+            val extrudeX = normalizedOffsetX * heightPx * 0.34f
             val extrudeY = -heightPx
 
             val bL = sx - halfW
@@ -1964,6 +1941,37 @@ private fun DrawScope.drawRealCoord3dBuildings(
             val rT = bT + extrudeY
             val rB = bB + extrudeY
 
+            // 1. 地面斜向日光投影（大幅增强 3D 贴地立体感）
+            val shadowDx = heightPx * 0.34f
+            val shadowDy = heightPx * 0.16f
+            val shadowPath = Path().apply {
+                moveTo(bL, bB)
+                lineTo(bR, bB)
+                lineTo(bR + shadowDx, bB + shadowDy)
+                lineTo(bR + shadowDx, bT + shadowDy)
+                lineTo(bR, bT)
+                lineTo(bL, bB)
+                close()
+            }
+            drawPath(path = shadowPath, color = shadowColor)
+
+            val roofColor = when {
+                isTallTower -> glassRoofColor
+                isWarmBlock -> warmRoofColor
+                else -> stdRoofColor
+            }
+            val frontColor = when {
+                isTallTower -> glassFrontColor
+                isWarmBlock -> warmFrontColor
+                else -> stdFrontColor
+            }
+            val sideColor = when {
+                isTallTower -> glassSideColor
+                isWarmBlock -> warmSideColor
+                else -> stdSideColor
+            }
+
+            // 2. 南侧主立面
             val frontWall = Path().apply {
                 moveTo(bL, bB)
                 lineTo(bR, bB)
@@ -1971,8 +1979,10 @@ private fun DrawScope.drawRealCoord3dBuildings(
                 lineTo(rL, rB)
                 close()
             }
-            drawPath(path = frontWall, color = frontWallColor)
+            drawPath(path = frontWall, color = frontColor)
+            drawPath(path = frontWall, color = stdStrokeColor.copy(alpha = 0.45f), style = Stroke(width = 0.8.dp.toPx()))
 
+            // 3. 东西侧阴影立面（随相对屏幕中心方向自动切换可见侧面）
             val sideWall = Path().apply {
                 if (sx < w / 2f) {
                     moveTo(bR, bT)
@@ -1987,8 +1997,27 @@ private fun DrawScope.drawRealCoord3dBuildings(
                 }
                 close()
             }
-            drawPath(path = sideWall, color = sideWallColor)
+            drawPath(path = sideWall, color = sideColor)
+            drawPath(path = sideWall, color = stdStrokeColor.copy(alpha = 0.45f), style = Stroke(width = 0.8.dp.toPx()))
 
+            // 4. 摩天楼玻璃幕墙水平窗带细节
+            if (isTallTower && heightPx > 32.dp.toPx()) {
+                val floors = 4
+                for (f in 1..floors) {
+                    val t = f.toFloat() / (floors + 1)
+                    val fyL = bB + (rB - bB) * t
+                    val fxL = bL + (rL - bL) * t + 2.dp.toPx()
+                    val fxR = bR + (rR - bR) * t - 2.dp.toPx()
+                    drawLine(
+                        color = windowStripColor,
+                        start = Offset(fxL, fyL),
+                        end = Offset(fxR, fyL),
+                        strokeWidth = 1.6.dp.toPx()
+                    )
+                }
+            }
+
+            // 5. 建筑屋顶与清爽高光描边
             val roof = Path().apply {
                 moveTo(rL, rT)
                 lineTo(rR, rT)
@@ -1997,7 +2026,35 @@ private fun DrawScope.drawRealCoord3dBuildings(
                 close()
             }
             drawPath(path = roof, color = roofColor)
-            drawPath(path = roof, color = strokeColor, style = Stroke(width = 1.dp.toPx()))
+            drawPath(path = roof, color = stdStrokeColor, style = Stroke(width = 1.0.dp.toPx()))
+
+            // 6. 摩天大楼顶层退台女儿墙（Apple Maps 地标质感）
+            if (isTallTower && heightPx > 38.dp.toPx()) {
+                val insetX = halfW * 0.34f
+                val insetY = halfD * 0.34f
+                val topLift = 7.dp.toPx() * pitchFactor
+                val pL = rL + insetX
+                val pR = rR - insetX
+                val pT = rT + insetY - topLift
+                val pB = rB - insetY - topLift
+                val capFront = Path().apply {
+                    moveTo(rL + insetX, rB - insetY)
+                    lineTo(rR - insetX, rB - insetY)
+                    lineTo(pR, pB)
+                    lineTo(pL, pB)
+                    close()
+                }
+                drawPath(path = capFront, color = sideColor)
+                val capRoof = Path().apply {
+                    moveTo(pL, pT)
+                    lineTo(pR, pT)
+                    lineTo(pR, pB)
+                    lineTo(pL, pB)
+                    close()
+                }
+                drawPath(path = capRoof, color = roofColor)
+                drawPath(path = capRoof, color = stdStrokeColor.copy(alpha = 0.7f), style = Stroke(width = 0.8.dp.toPx()))
+            }
         }
     }
 }
@@ -2232,19 +2289,20 @@ private fun DrawScope.draw2dProceduralCityVectorMap(
     scaledTilePx: Float,
     isDarkStyle: Boolean
 ) {
-    drawRect(color = if (isDarkStyle) Color(0xFF141C2B) else Color(0xFFF1F4F8))
+    drawRect(color = if (isDarkStyle) Color(0xFF141C2B) else Color(0xFFEAF0F6))
 
-    val stepDeg = 0.0045
+    val stepDeg = 0.0038
     val startLatIdx = floor((centerLat - 0.04) / stepDeg).toInt()
     val endLatIdx = floor((centerLat + 0.04) / stepDeg).toInt()
     val startLonIdx = floor((centerLon - 0.04) / stepDeg).toInt()
     val endLonIdx = floor((centerLon + 0.04) / stepDeg).toInt()
 
-    val parkColor = if (isDarkStyle) Color(0xFF1B332B) else Color(0xFFD4EEDB)
-    val waterColor = if (isDarkStyle) Color(0xFF172C46) else Color(0xFFBFE0FF)
-    val blockColor = if (isDarkStyle) Color(0xFF1C2638) else Color(0xFFE5EAF0)
-    val roadColor = if (isDarkStyle) Color(0xFF28364D) else Color.White
-    val highwayColor = if (isDarkStyle) Color(0xFF3B4F70) else Color(0xFFFDE68A)
+    val parkColor = if (isDarkStyle) Color(0xFF1B332B) else Color(0xFFCDECCD)
+    val waterColor = if (isDarkStyle) Color(0xFF172C46) else Color(0xFFA7D8FF)
+    val palaceColor = if (isDarkStyle) Color(0xFF2B2328) else Color(0xFFF5E6D3)
+    val blockColor = if (isDarkStyle) Color(0xFF1C2638) else Color(0xFFDFE6EE)
+    val roadColor = if (isDarkStyle) Color(0xFF2B3B54) else Color.White
+    val highwayColor = if (isDarkStyle) Color(0xFF475F84) else Color(0xFFFCD34D)
 
     for (latIdx in startLatIdx..endLatIdx) {
         for (lonIdx in startLonIdx..endLonIdx) {
@@ -2256,15 +2314,16 @@ private fun DrawScope.draw2dProceduralCityVectorMap(
             val sy = anchorY + ((pty - centerTileY) * scaledTilePx).toFloat()
 
             val hash = abs((latIdx * 73856093) xor (lonIdx * 19349663))
-            val cellSize = 48.dp.toPx()
+            val cellSize = 54.dp.toPx()
             val fill = when {
-                hash % 13 == 0 -> waterColor
-                hash % 9 == 0 -> parkColor
+                hash % 11 == 0 -> waterColor
+                hash % 7 == 0 -> parkColor
+                hash % 15 == 0 -> palaceColor
                 else -> blockColor
             }
             drawRoundRect(
                 color = fill,
-                topLeft = Offset(sx + 4.dp.toPx(), sy + 4.dp.toPx()),
+                topLeft = Offset(sx + 3.dp.toPx(), sy + 3.dp.toPx()),
                 size = Size(cellSize, cellSize),
                 cornerRadius = CornerRadius(6.dp.toPx())
             )
@@ -2280,7 +2339,7 @@ private fun DrawScope.draw2dProceduralCityVectorMap(
             color = if (isArterial) highwayColor else roadColor,
             start = Offset(0f, sy),
             end = Offset(w, sy),
-            strokeWidth = if (isArterial) 6.dp.toPx() else 3.dp.toPx()
+            strokeWidth = if (isArterial) 8.dp.toPx() else 4.dp.toPx()
         )
     }
     for (lonIdx in startLonIdx..endLonIdx) {
@@ -2292,8 +2351,41 @@ private fun DrawScope.draw2dProceduralCityVectorMap(
             color = if (isArterial) highwayColor else roadColor,
             start = Offset(sx, 0f),
             end = Offset(sx, h),
-            strokeWidth = if (isArterial) 6.dp.toPx() else 3.dp.toPx()
+            strokeWidth = if (isArterial) 8.dp.toPx() else 4.dp.toPx()
         )
+    }
+
+    // 真实坐标校准的底图地标与主干道中文路名（确保瓦片加载前或离线状态下地图依然清晰丰富、绝不空白）
+    val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val coreLandmarks = listOf(
+        Triple("东长安街", 39.9080, 116.4035),
+        Triple("南池子大街", 39.9112, 116.4024),
+        Triple("东华门大街", 39.9154, 116.4050),
+        Triple("王府井步行街", 39.9145, 116.4115),
+        Triple("故宫博物院", 39.9163, 116.3972),
+        Triple("天安门广场", 39.9055, 116.3976),
+        Triple("菖蒲河公园", 39.9088, 116.4042),
+        Triple("劳动人民文化宫", 39.9108, 116.3995)
+    )
+    coreLandmarks.forEach { (name, lat, lon) ->
+        val ptx = lonToTileX(lon, n)
+        val pty = latToTileY(lat, n)
+        val sx = (w / 2f) + ((ptx - centerTileX) * scaledTilePx).toFloat()
+        val sy = anchorY + ((pty - centerTileY) * scaledTilePx).toFloat()
+        if (sx in 30f..(w - 30f) && sy in 40f..(h - 40f)) {
+            labelPaint.textSize = 12.sp.toPx()
+            labelPaint.style = Paint.Style.STROKE
+            labelPaint.strokeWidth = 3.5.dp.toPx()
+            labelPaint.color = if (isDarkStyle) android.graphics.Color.rgb(20, 28, 43) else android.graphics.Color.WHITE
+            drawContext.canvas.nativeCanvas.drawText(name, sx, sy, labelPaint)
+
+            labelPaint.style = Paint.Style.FILL
+            labelPaint.color = if (isDarkStyle) android.graphics.Color.rgb(203, 213, 225) else android.graphics.Color.rgb(51, 65, 85)
+            drawContext.canvas.nativeCanvas.drawText(name, sx, sy, labelPaint)
+        }
     }
 }
 

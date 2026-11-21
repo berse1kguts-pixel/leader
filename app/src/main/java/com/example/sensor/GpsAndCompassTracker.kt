@@ -51,12 +51,15 @@ class GpsAndCompassTracker(context: Context) : SensorEventListener {
     private val rotationMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
 
+    private var isSimulationLocked = false
+
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            // 过滤 Android 模拟器出厂默认的美国加州 Mountain View (37.422, -122.084) 虚拟坐标，避免国内导航起点跳到海外
-            val isDefaultUsEmulatorCoord =
-                location.latitude in 37.35..37.48 && location.longitude in -122.15..-122.00
-            if (isDefaultUsEmulatorCoord) return
+            if (isSimulationLocked) return
+            // 过滤云端容器/模拟器出厂虚拟坐标或异地机房 IP 定位（避免起点跳到 1400 公里外的机房导致算路变成 1423 公里）
+            val isReasonableLocalGps =
+                location.latitude in 39.40..40.50 && location.longitude in 115.70..117.10
+            if (!isReasonableLocalGps) return
 
             val speedKmh = if (location.hasSpeed()) (location.speed * 3.6f).coerceAtLeast(0f) else 0f
             val newBearing = if (location.hasBearing() && speedKmh > 3f) {

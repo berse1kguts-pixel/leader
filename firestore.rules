@@ -1,0 +1,411 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny everything not explicitly allowed
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Shared Security Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidStringList(arr, minLen, maxLen) {
+      return arr is list &&
+             arr.size() >= minLen &&
+             arr.size() <= maxLen &&
+             (arr.size() == 0 || arr[0] is string);
+    }
+
+    function isGroupMember(groupId) {
+      return exists(/databases/$(database)/documents/guardian_groups/$(groupId)) &&
+             request.auth.uid in get(/databases/$(database)/documents/guardian_groups/$(groupId)).data.memberUids;
+    }
+
+    function isGroupMemberAfter(groupId) {
+      return existsAfter(/databases/$(database)/documents/guardian_groups/$(groupId)) &&
+             request.auth.uid in getAfter(/databases/$(database)/documents/guardian_groups/$(groupId)).data.memberUids;
+    }
+
+    // --- Validation Helpers (Anti-Update-Gap) ---
+    function isValidGroupInvite(data) {
+      return data.groupId is string && isValidId(data.groupId) &&
+             data.groupName is string && data.groupName.size() >= 1 && data.groupName.size() <= 60 &&
+             data.ownerUid is string && isValidId(data.ownerUid) &&
+             data.unlockDurationSeconds is int && data.unlockDurationSeconds >= 15 && data.unlockDurationSeconds <= 86400 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidGuardianGroup(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+             data.inviteCode is string && isValidId(data.inviteCode) && data.inviteCode.size() >= 4 && data.inviteCode.size() <= 16 &&
+             data.ownerUid is string && isValidId(data.ownerUid) &&
+             isValidStringList(data.memberUids, 1, 30) &&
+             data.unlockDurationSeconds is int && data.unlockDurationSeconds >= 15 && data.unlockDurationSeconds <= 86400 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidGroupMember(data) {
+      return data.uid is string && isValidId(data.uid) &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 50 &&
+             data.trackingEnabled is bool &&
+             data.consentAccepted is bool &&
+             data.consentVersion is string && data.consentVersion.size() >= 1 && data.consentVersion.size() <= 32 &&
+             data.batteryPercent is int && data.batteryPercent >= 0 && data.batteryPercent <= 100 &&
+             data.lastReportAtMs is int && data.lastReportAtMs >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidGroupMessage(data) {
+      return data.groupId is string && isValidId(data.groupId) &&
+             data.senderUid is string && isValidId(data.senderUid) &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 50 &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 500 &&
+             data.kind in ['CHAT', 'SYSTEM', 'RESOLUTION_ALERT'] &&
+             (!('relatedResolutionId' in data) || (data.relatedResolutionId is string && data.relatedResolutionId.size() <= 128)) &&
+             isValidStringList(data.memberUids, 1, 30) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidGuardianResolution(data) {
+      return data.groupId is string && isValidId(data.groupId) &&
+             data.initiatorUid is string && isValidId(data.initiatorUid) &&
+             data.initiatorName is string && data.initiatorName.size() >= 1 && data.initiatorName.size() <= 50 &&
+             data.targetUid is string && isValidId(data.targetUid) &&
+             data.targetName is string && data.targetName.size() >= 1 && data.targetName.size() <= 50 &&
+             data.initiatorUid != data.targetUid &&
+             data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 200 &&
+             data.status in ['VOTING', 'VETOED', 'REJECTED', 'UNLOCKED'] &&
+             isValidStringList(data.approveUids, 0, 30) &&
+             isValidStringList(data.rejectUids, 0, 30) &&
+             data.targetVetoed is bool &&
+             isValidStringList(data.memberUids, 2, 30) &&
+             data.unlockAt is timestamp &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidKeyEscrow(data) {
+      return data.ownerUid is string && isValidId(data.ownerUid) &&
+             data.groupId is string && isValidId(data.groupId) &&
+             data.escrowedAesKeyB64 is string && data.escrowedAesKeyB64.size() >= 16 && data.escrowedAesKeyB64.size() <= 256 &&
+             data.unlockedByResolutionId is string && data.unlockedByResolutionId.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidEncryptedTrack(data) {
+      return data.groupId is string && isValidId(data.groupId) &&
+             data.ownerUid is string && isValidId(data.ownerUid) &&
+             data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 50 &&
+             data.encryptedPayload is string && data.encryptedPayload.size() >= 16 && data.encryptedPayload.size() <= 2048 &&
+             data.batteryPercent is int && data.batteryPercent >= 0 && data.batteryPercent <= 100 &&
+             data.recordedAtMs is int && data.recordedAtMs >= 0 &&
+             isValidStringList(data.memberUids, 1, 30) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // 1. Invite Codes (Single-doc lookup by exact invite code only; never listable)
+    match /group_invites/{inviteCode} {
+      allow get: if isSignedIn() && isValidId(inviteCode);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(inviteCode) &&
+                       incoming().keys().hasAll(['groupId', 'groupName', 'ownerUid', 'unlockDurationSeconds', 'createdAt']) &&
+                       incoming().keys().hasOnly(['groupId', 'groupName', 'ownerUid', 'unlockDurationSeconds', 'createdAt']) &&
+                       isValidGroupInvite(incoming()) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       existsAfter(/databases/$(database)/documents/guardian_groups/$(incoming().groupId)) &&
+                       getAfter(/databases/$(database)/documents/guardian_groups/$(incoming().groupId)).data.ownerUid == request.auth.uid;
+
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(inviteCode) && existing().ownerUid == request.auth.uid;
+    }
+
+    // 2. Guardian Groups
+    match /guardian_groups/{groupId} {
+      allow get: if isSignedIn() && isValidId(groupId) && request.auth.uid in existing().memberUids;
+      allow list: if isSignedIn() && request.auth.uid in existing().memberUids;
+
+      allow create: if isSignedIn() &&
+                       isValidId(groupId) &&
+                       incoming().keys().hasAll(['name', 'inviteCode', 'ownerUid', 'memberUids', 'unlockDurationSeconds', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['name', 'inviteCode', 'ownerUid', 'memberUids', 'unlockDurationSeconds', 'createdAt', 'updatedAt']) &&
+                       isValidGuardianGroup(incoming()) &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().memberUids.size() == 1 &&
+                       request.auth.uid in incoming().memberUids;
+
+      allow update: if isSignedIn() &&
+                       isValidId(groupId) &&
+                       isValidGuardianGroup(incoming()) &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().inviteCode == existing().inviteCode &&
+                       incoming().createdAt == existing().createdAt && (
+                         // Action A: Join group via valid invite code (user adds only themselves)
+                         (
+                           !(request.auth.uid in existing().memberUids) &&
+                           request.auth.uid in incoming().memberUids &&
+                           incoming().memberUids.hasAll(existing().memberUids) &&
+                           incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+                           incoming().name == existing().name &&
+                           incoming().unlockDurationSeconds == existing().unlockDurationSeconds &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt']) &&
+                           exists(/databases/$(database)/documents/group_invites/$(existing().inviteCode))
+                         ) ||
+                         // Action B: Non-owner leaves group (removes only themselves)
+                         (
+                           request.auth.uid in existing().memberUids &&
+                           request.auth.uid != existing().ownerUid &&
+                           !(request.auth.uid in incoming().memberUids) &&
+                           existing().memberUids.hasAll(incoming().memberUids) &&
+                           incoming().memberUids.size() == existing().memberUids.size() - 1 &&
+                           incoming().name == existing().name &&
+                           incoming().unlockDurationSeconds == existing().unlockDurationSeconds &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+                         ) ||
+                         // Action C: Group owner updates group settings
+                         (
+                           existing().ownerUid == request.auth.uid &&
+                           incoming().memberUids == existing().memberUids &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'unlockDurationSeconds', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidId(groupId) && existing().ownerUid == request.auth.uid;
+
+      // 2a. Member Profiles & Consent Status (fetched via single-doc get; no list needed)
+      match /members/{memberUid} {
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(memberUid) && isGroupMember(groupId);
+        allow list: if false;
+
+        allow create: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(memberUid) &&
+                         request.auth.uid == memberUid &&
+                         incoming().uid == request.auth.uid &&
+                         incoming().keys().hasAll(['uid', 'displayName', 'trackingEnabled', 'consentAccepted', 'consentVersion', 'batteryPercent', 'lastReportAtMs', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['uid', 'displayName', 'trackingEnabled', 'consentAccepted', 'consentVersion', 'batteryPercent', 'lastReportAtMs', 'createdAt', 'updatedAt']) &&
+                         isValidGroupMember(incoming()) &&
+                         isGroupMemberAfter(groupId);
+
+        allow update: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(memberUid) &&
+                         request.auth.uid == memberUid &&
+                         isValidGroupMember(incoming()) &&
+                         incoming().uid == existing().uid &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'trackingEnabled', 'consentAccepted', 'consentVersion', 'batteryPercent', 'lastReportAtMs', 'updatedAt']) &&
+                         isGroupMember(groupId);
+
+        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(memberUid) && request.auth.uid == memberUid;
+      }
+
+      // 2b. Group Chat Messages & Automated Resolution Alerts
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(messageId) && request.auth.uid in existing().memberUids;
+        allow list: if isSignedIn() && request.auth.uid in existing().memberUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(messageId) &&
+                         incoming().keys().hasAll(['groupId', 'senderUid', 'senderName', 'text', 'kind', 'memberUids', 'createdAt']) &&
+                         incoming().keys().hasOnly(['groupId', 'senderUid', 'senderName', 'text', 'kind', 'relatedResolutionId', 'memberUids', 'createdAt']) &&
+                         isValidGroupMessage(incoming()) &&
+                         incoming().groupId == groupId &&
+                         incoming().senderUid == request.auth.uid &&
+                         request.auth.uid in incoming().memberUids &&
+                         isGroupMember(groupId);
+
+        allow update, delete: if false;
+      }
+
+      // 2c. Consensus Resolutions (Initiator != Target, Target One-Vote Veto, Cooldown Gate)
+      match /resolutions/{resolutionId} {
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(resolutionId) && request.auth.uid in existing().memberUids;
+        allow list: if isSignedIn() && request.auth.uid in existing().memberUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(resolutionId) &&
+                         incoming().keys().hasAll(['groupId', 'initiatorUid', 'initiatorName', 'targetUid', 'targetName', 'reason', 'status', 'approveUids', 'rejectUids', 'targetVetoed', 'memberUids', 'unlockAt', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['groupId', 'initiatorUid', 'initiatorName', 'targetUid', 'targetName', 'reason', 'status', 'approveUids', 'rejectUids', 'targetVetoed', 'memberUids', 'unlockAt', 'createdAt', 'updatedAt']) &&
+                         isValidGuardianResolution(incoming()) &&
+                         incoming().groupId == groupId &&
+                         incoming().initiatorUid == request.auth.uid &&
+                         incoming().initiatorUid != incoming().targetUid &&
+                         incoming().status == 'VOTING' &&
+                         incoming().targetVetoed == false &&
+                         incoming().approveUids.size() == 1 &&
+                         request.auth.uid in incoming().approveUids &&
+                         incoming().rejectUids.size() == 0 &&
+                         request.auth.uid in incoming().memberUids &&
+                         incoming().targetUid in incoming().memberUids &&
+                         incoming().unlockAt > request.time &&
+                         isGroupMember(groupId) &&
+                         incoming().targetUid in get(/databases/$(database)/documents/guardian_groups/$(groupId)).data.memberUids;
+
+        allow update: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(resolutionId) &&
+                         isValidGuardianResolution(incoming()) &&
+                         // Terminal State Locking: immutable once VETOED, REJECTED, or UNLOCKED
+                         existing().status == 'VOTING' &&
+                         // Immutable identity & timestamp fields
+                         incoming().groupId == existing().groupId &&
+                         incoming().initiatorUid == existing().initiatorUid &&
+                         incoming().initiatorName == existing().initiatorName &&
+                         incoming().targetUid == existing().targetUid &&
+                         incoming().targetName == existing().targetName &&
+                         incoming().reason == existing().reason &&
+                         incoming().memberUids == existing().memberUids &&
+                         incoming().unlockAt == existing().unlockAt &&
+                         incoming().createdAt == existing().createdAt && (
+                           // Action 1: Target One-Vote Veto (exclusive to targetUid, works at any time while VOTING)
+                           (
+                             request.auth.uid == existing().targetUid &&
+                             incoming().targetVetoed == true &&
+                             incoming().status == 'VETOED' &&
+                             incoming().approveUids == existing().approveUids &&
+                             incoming().rejectUids == existing().rejectUids &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['targetVetoed', 'status', 'updatedAt'])
+                           ) ||
+                           // Action 2: Other member casts/changes approve or reject vote (cannot modify targetVetoed or status)
+                           (
+                             request.auth.uid in existing().memberUids &&
+                             request.auth.uid != existing().targetUid &&
+                             incoming().targetVetoed == false &&
+                             incoming().status == 'VOTING' &&
+                             !(request.auth.uid in incoming().approveUids && request.auth.uid in incoming().rejectUids) &&
+                             incoming().approveUids.size() >= existing().approveUids.size() - 1 &&
+                             incoming().approveUids.size() <= existing().approveUids.size() + 1 &&
+                             incoming().rejectUids.size() >= existing().rejectUids.size() - 1 &&
+                             incoming().rejectUids.size() <= existing().rejectUids.size() + 1 &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['approveUids', 'rejectUids', 'updatedAt'])
+                           ) ||
+                           // Action 3: Cooldown elapsed + NOT vetoed + approve > reject -> UNLOCKED
+                           (
+                             request.auth.uid in existing().memberUids &&
+                             request.auth.uid != existing().targetUid &&
+                             existing().targetVetoed == false &&
+                             request.time >= existing().unlockAt &&
+                             existing().approveUids.size() > existing().rejectUids.size() &&
+                             incoming().targetVetoed == false &&
+                             incoming().status == 'UNLOCKED' &&
+                             incoming().approveUids == existing().approveUids &&
+                             incoming().rejectUids == existing().rejectUids &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                           ) ||
+                           // Action 4: Cooldown elapsed + approve <= reject -> REJECTED
+                           (
+                             request.auth.uid in existing().memberUids &&
+                             request.time >= existing().unlockAt &&
+                             existing().approveUids.size() <= existing().rejectUids.size() &&
+                             incoming().targetVetoed == false &&
+                             incoming().status == 'REJECTED' &&
+                             incoming().approveUids == existing().approveUids &&
+                             incoming().rejectUids == existing().rejectUids &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                           )
+                         );
+
+        allow delete: if false;
+      }
+
+      // 2d. Escrowed AES Keys (Strictly unreadable by others until linked resolution reaches UNLOCKED)
+      match /key_escrows/{ownerUid} {
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(ownerUid) && (
+          request.auth.uid == ownerUid ||
+          (
+            existing().unlockedByResolutionId.size() > 0 &&
+            exists(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(existing().unlockedByResolutionId)) &&
+            get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(existing().unlockedByResolutionId)).data.status == 'UNLOCKED' &&
+            get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(existing().unlockedByResolutionId)).data.targetVetoed == false &&
+            get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(existing().unlockedByResolutionId)).data.targetUid == ownerUid &&
+            request.auth.uid in get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(existing().unlockedByResolutionId)).data.memberUids
+          )
+        );
+        allow list: if false;
+
+        allow create: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(ownerUid) &&
+                         request.auth.uid == ownerUid &&
+                         incoming().keys().hasAll(['ownerUid', 'groupId', 'escrowedAesKeyB64', 'unlockedByResolutionId', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['ownerUid', 'groupId', 'escrowedAesKeyB64', 'unlockedByResolutionId', 'createdAt', 'updatedAt']) &&
+                         isValidKeyEscrow(incoming()) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         incoming().groupId == groupId &&
+                         incoming().unlockedByResolutionId == '' &&
+                         isGroupMember(groupId);
+
+        allow update: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(ownerUid) &&
+                         isValidKeyEscrow(incoming()) &&
+                         incoming().ownerUid == existing().ownerUid &&
+                         incoming().groupId == existing().groupId &&
+                         incoming().createdAt == existing().createdAt && (
+                           // Owner refreshes key or resets lock link
+                           (
+                             request.auth.uid == ownerUid &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['escrowedAesKeyB64', 'unlockedByResolutionId', 'updatedAt'])
+                           ) ||
+                           // Group member claims escrow ONLY by linking a verified UNLOCKED resolution for ownerUid
+                           (
+                             request.auth.uid != ownerUid &&
+                             incoming().escrowedAesKeyB64 == existing().escrowedAesKeyB64 &&
+                             incoming().unlockedByResolutionId.size() > 0 &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['unlockedByResolutionId', 'updatedAt']) &&
+                             exists(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(incoming().unlockedByResolutionId)) &&
+                             get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(incoming().unlockedByResolutionId)).data.status == 'UNLOCKED' &&
+                             get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(incoming().unlockedByResolutionId)).data.targetVetoed == false &&
+                             get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(incoming().unlockedByResolutionId)).data.targetUid == ownerUid &&
+                             request.auth.uid in get(/databases/$(database)/documents/guardian_groups/$(groupId)/resolutions/$(incoming().unlockedByResolutionId)).data.memberUids
+                           )
+                         );
+
+        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(ownerUid) && request.auth.uid == ownerUid;
+      }
+
+      // 2e. Encrypted Location Tracks (Server stores ciphertext only; never plaintext lat/lng)
+      match /encrypted_tracks/{trackId} {
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(trackId) && request.auth.uid in existing().memberUids;
+        allow list: if isSignedIn() && request.auth.uid in existing().memberUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(groupId) &&
+                         isValidId(trackId) &&
+                         incoming().keys().hasAll(['groupId', 'ownerUid', 'ownerName', 'encryptedPayload', 'batteryPercent', 'recordedAtMs', 'memberUids', 'createdAt']) &&
+                         incoming().keys().hasOnly(['groupId', 'ownerUid', 'ownerName', 'encryptedPayload', 'batteryPercent', 'recordedAtMs', 'memberUids', 'createdAt']) &&
+                         isValidEncryptedTrack(incoming()) &&
+                         incoming().groupId == groupId &&
+                         incoming().ownerUid == request.auth.uid &&
+                         request.auth.uid in incoming().memberUids &&
+                         isGroupMember(groupId);
+
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(trackId) && existing().ownerUid == request.auth.uid;
+      }
+    }
+  }
+}

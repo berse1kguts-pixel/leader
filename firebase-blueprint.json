@@ -1,0 +1,395 @@
+{
+  "entities": {
+    "GroupInvite": {
+      "title": "GroupInvite",
+      "description": "Invite code lookup entry allowing signed-in users with an exact 6-char code to join a guardian group.",
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "description": "Target guardian group document ID."
+        },
+        "groupName": {
+          "type": "string",
+          "description": "Display name of the guardian group."
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the group creator."
+        },
+        "unlockDurationSeconds": {
+          "type": "integer",
+          "description": "Cooldown seconds required before a resolution can unlock."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "groupId",
+        "groupName",
+        "ownerUid",
+        "unlockDurationSeconds",
+        "createdAt"
+      ]
+    },
+    "GuardianGroup": {
+      "title": "GuardianGroup",
+      "description": "In-app safety guardian group coordinating encrypted location reporting and consensus resolutions.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the safety guardian group."
+        },
+        "inviteCode": {
+          "type": "string",
+          "description": "Uppercase alphanumeric code shared with trusted members."
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the creator."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Bounded list (max 30) of authorized member UIDs."
+        },
+        "unlockDurationSeconds": {
+          "type": "integer",
+          "description": "Notice/veto window in seconds before a resolution can unlock."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "name",
+        "inviteCode",
+        "ownerUid",
+        "memberUids",
+        "unlockDurationSeconds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GroupMember": {
+      "title": "GroupMember",
+      "description": "Per-member consent, encrypted tracking toggle, and battery status within a guardian group.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the member."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display nickname shown inside the guardian group."
+        },
+        "trackingEnabled": {
+          "type": "boolean",
+          "description": "Whether encrypted location reporting is enabled."
+        },
+        "consentAccepted": {
+          "type": "boolean",
+          "description": "Whether the member explicitly signed the emergency authorization agreement."
+        },
+        "consentVersion": {
+          "type": "string",
+          "description": "Consent notice version string."
+        },
+        "batteryPercent": {
+          "type": "integer",
+          "description": "Latest device battery percentage (0-100)."
+        },
+        "lastReportAtMs": {
+          "type": "integer",
+          "description": "Client epoch millis of the last encrypted upload."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "trackingEnabled",
+        "consentAccepted",
+        "consentVersion",
+        "batteryPercent",
+        "lastReportAtMs",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GroupMessage": {
+      "title": "GroupMessage",
+      "description": "In-app chat message or automated resolution notification inside a guardian group.",
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "description": "Parent group ID."
+        },
+        "senderUid": {
+          "type": "string",
+          "description": "Sender UID."
+        },
+        "senderName": {
+          "type": "string",
+          "description": "Sender display name."
+        },
+        "text": {
+          "type": "string",
+          "description": "Message body."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["CHAT", "SYSTEM", "RESOLUTION_ALERT"],
+          "description": "Message category."
+        },
+        "relatedResolutionId": {
+          "type": "string",
+          "description": "Optional ID of an associated resolution."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Denormalized group member UIDs for secure list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "groupId",
+        "senderUid",
+        "senderName",
+        "text",
+        "kind",
+        "memberUids",
+        "createdAt"
+      ]
+    },
+    "GuardianResolution": {
+      "title": "GuardianResolution",
+      "description": "Emergency location-view resolution initiated by another member with target one-vote veto and cooldown.",
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "description": "Parent group ID."
+        },
+        "initiatorUid": {
+          "type": "string",
+          "description": "UID of the member initiating the resolution (must differ from targetUid)."
+        },
+        "initiatorName": {
+          "type": "string",
+          "description": "Display name of the initiator."
+        },
+        "targetUid": {
+          "type": "string",
+          "description": "UID of the member whose encrypted location is requested."
+        },
+        "targetName": {
+          "type": "string",
+          "description": "Display name of the target member."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for requesting emergency location view."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["VOTING", "VETOED", "REJECTED", "UNLOCKED"],
+          "description": "Lifecycle status of the resolution."
+        },
+        "approveUids": {
+          "type": "array",
+          "description": "Member UIDs voting to approve."
+        },
+        "rejectUids": {
+          "type": "array",
+          "description": "Member UIDs voting against."
+        },
+        "targetVetoed": {
+          "type": "boolean",
+          "description": "True if target exercised their exclusive one-vote veto."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Denormalized group member UIDs for secure list queries."
+        },
+        "unlockAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Earliest server time when resolution can transition to UNLOCKED."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "groupId",
+        "initiatorUid",
+        "initiatorName",
+        "targetUid",
+        "targetName",
+        "reason",
+        "status",
+        "approveUids",
+        "rejectUids",
+        "targetVetoed",
+        "memberUids",
+        "unlockAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "KeyEscrow": {
+      "title": "KeyEscrow",
+      "description": "AES-256-GCM key escrow document readable by group members only after an UNLOCKED non-vetoed resolution.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of the key owner."
+        },
+        "groupId": {
+          "type": "string",
+          "description": "Parent group ID."
+        },
+        "escrowedAesKeyB64": {
+          "type": "string",
+          "description": "Base64-encoded AES-256 key released only upon resolution unlock."
+        },
+        "unlockedByResolutionId": {
+          "type": "string",
+          "description": "Resolution ID linking an UNLOCKED non-vetoed resolution."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "groupId",
+        "escrowedAesKeyB64",
+        "unlockedByResolutionId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EncryptedTrackPoint": {
+      "title": "EncryptedTrackPoint",
+      "description": "End-to-end AES-256-GCM encrypted location breadcrumb stored in Firestore without plaintext coordinates.",
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "description": "Parent group ID."
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of the member uploading the ciphertext."
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Display name of the member."
+        },
+        "encryptedPayload": {
+          "type": "string",
+          "description": "AES-256-GCM ivBase64:cipherBase64 ciphertext containing lat, lng, speed, accuracy."
+        },
+        "batteryPercent": {
+          "type": "integer",
+          "description": "Device battery percentage at upload."
+        },
+        "recordedAtMs": {
+          "type": "integer",
+          "description": "Client capture timestamp in epoch ms."
+        },
+        "memberUids": {
+          "type": "array",
+          "description": "Denormalized group member UIDs for secure list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "groupId",
+        "ownerUid",
+        "ownerName",
+        "encryptedPayload",
+        "batteryPercent",
+        "recordedAtMs",
+        "memberUids",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/group_invites/{inviteCode}": {
+      "schema": { "$ref": "#/entities/GroupInvite" },
+      "description": "Invite code lookup records for joining a guardian group."
+    },
+    "/guardian_groups/{groupId}": {
+      "schema": { "$ref": "#/entities/GuardianGroup" },
+      "description": "Guardian group metadata and bounded member UID list."
+    },
+    "/guardian_groups/{groupId}/members/{memberUid}": {
+      "schema": { "$ref": "#/entities/GroupMember" },
+      "description": "Member consent status, tracking toggle, and battery telemetry."
+    },
+    "/guardian_groups/{groupId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/GroupMessage" },
+      "description": "In-app guardian group chat and resolution notifications."
+    },
+    "/guardian_groups/{groupId}/resolutions/{resolutionId}": {
+      "schema": { "$ref": "#/entities/GuardianResolution" },
+      "description": "Consensus resolutions with cooldown and target one-vote veto."
+    },
+    "/guardian_groups/{groupId}/key_escrows/{ownerUid}": {
+      "schema": { "$ref": "#/entities/KeyEscrow" },
+      "description": "Escrowed AES keys gated by an unlocked non-vetoed resolution."
+    },
+    "/guardian_groups/{groupId}/encrypted_tracks/{trackId}": {
+      "schema": { "$ref": "#/entities/EncryptedTrackPoint" },
+      "description": "AES-256-GCM encrypted location track points."
+    }
+  }
+}
